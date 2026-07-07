@@ -48,6 +48,13 @@ class TestPortfolioBuy:
         with pytest.raises(ValueError, match='Insufficient cash'):
             pf.buy('513100', 5000, 2.0)
 
+    def test_buy_zero_shares_no_op(self):
+        """买入 0 股不应影响现金或仓位"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 0, 2.0)
+        assert pf.cash == 1_000_000
+        assert '513100' not in pf.positions
+
 
 class TestPortfolioBuyMultiple:
     """Buying same ETF multiple times — weighted average price."""
@@ -116,6 +123,17 @@ class TestPortfolioSell:
         pf = Portfolio(cash=1_000_000)
         with pytest.raises(ValueError, match='not held'):
             pf.sell('513100', 1000, 2.5)
+
+    def test_sell_zero_shares_no_op(self):
+        """卖出 0 股不应影响现金、仓位或已实现盈亏"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0)
+        cash_before = pf.cash
+        realized = pf.sell('513100', 0, 2.5)
+        assert realized == 0.0
+        assert pf.cash == cash_before
+        assert pf.positions['513100'].quantity == 5000
+        assert pf.total_pnl == 0.0
 
 
 class TestPortfolioTotalValue:

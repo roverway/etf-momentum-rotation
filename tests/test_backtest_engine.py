@@ -5,6 +5,7 @@ TDD: tests written before implementation.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from unittest.mock import patch
 
@@ -271,3 +272,33 @@ class TestRunBacktest:
         # No data matches this range → no trades
         assert len(portfolio.positions) == 0
         assert portfolio.cash == config.initial_cash
+
+
+class TestRunBacktestEdgeCases:
+    """Edge case tests for the backtest engine."""
+
+    @patch('trading_calendar.load_trading_calendar')
+    def test_insufficient_data_logs_warning(self, mock_cal, caplog):
+        """数据不足跳过交易日时应记录 warning 日志"""
+        dates = [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)]
+        mock_cal.return_value = dates
+
+        etf_data = {
+            'ETF_A': pd.DataFrame({
+                'date': [date(2024, 1, 2)],
+                'close': [10.0],
+            }),
+        }
+        config = BacktestConfig(
+            start_date='2024-01-02', end_date='2024-01-04',
+            initial_cash=1_000_000,
+        )
+
+        caplog.set_level(logging.WARNING)
+        with patch('backtest_engine.CHECK_RANGE', 22):
+            portfolio = run_backtest(config, etf_data=etf_data)
+
+        assert len(portfolio.positions) == 0
+        assert portfolio.cash == config.initial_cash
+        assert "数据不足" in caplog.text
+        assert "1 < 22" in caplog.text or "CHECK_RANGE" in caplog.text

@@ -4,6 +4,7 @@ Tests use mocked AKShare (no real network calls). Caching is tested
 via pytest's tmp_path for isolation.
 """
 
+import logging
 import os
 from datetime import date
 from unittest.mock import patch
@@ -12,6 +13,8 @@ import pandas as pd
 import pytest
 
 from data import fetch_single_etf, load_all_etf_data
+
+logger = logging.getLogger("data")
 
 
 # ======================================================================
@@ -60,6 +63,24 @@ class TestFetchSingleETF:
             df = fetch_single_etf('sh513100')
             assert df['date'].dtype == object  # datetime.date
             assert df['volume'].dtype in ('int64', 'int32')
+
+    def test_network_failure_returns_empty_dataframe(self, caplog):
+        """网络失败时返回空 DataFrame 并记录警告"""
+        caplog.set_level(logging.WARNING)
+        with patch('data.ak.fund_etf_hist_sina', side_effect=ConnectionError("timeout")):
+            df = fetch_single_etf('sh513100')
+        assert isinstance(df, pd.DataFrame)
+        assert df.empty
+        assert "下载 sh513100 失败" in caplog.text
+        assert "timeout" in caplog.text
+
+    def test_network_failure_generic_exception(self, caplog):
+        """任意异常都应被捕获并返回空 DataFrame"""
+        caplog.set_level(logging.WARNING)
+        with patch('data.ak.fund_etf_hist_sina', side_effect=ValueError("bad symbol")):
+            df = fetch_single_etf('sh999999')
+        assert df.empty
+        assert "下载 sh999999 失败" in caplog.text
 
 
 # ======================================================================
@@ -158,3 +179,44 @@ class TestLoadAllETFData:
             result = load_all_etf_data([], cache_dir=cache_dir)
         assert result == {}
         mock_ak.assert_not_called()
+
+    def test_zero_volume_warning(self, tmp_path, caplog):
+        """存在零成交量日时记录警告"""
+        caplog.set_level(logging.WARNING)
+        data = pd.DataFrame({
+            'date': [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)],
+            'open': [1.0, 1.02, 1.01],
+            'high': [1.05, 1.06, 1.04],
+            'low': [0.99, 1.01, 0.98],
+            'close': [1.02, 1.04, 1.03],
+            'volume': [1_000_000, 0, 0],
+            'amount': [1_020_000.0, 0.0, 0.0],
+        })
+        codes = ['513100.XSHG']
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.fund_etf_hist_sina', return_value=data):
+            result = load_all_etf_data(codes, cache_dir=cache_dir)
+
+        assert '513100.XSHG' in result
+        assert "存在零成交量日" in caplog.text
+        assert "2024-01-03" in caplog.text
+        assert "2024-01-04" in caplog.text
+
+    def test_no_zero_volume_no_warning(self, tmp_path, caplog):
+        """没有零成交量日时不记录警告"""
+        caplog.set_level(logging.WARNING)
+        data = pd.DataFrame({
+            'date': [date(2024, 1, 2), date(2024, 1, 3)],
+            'open': [1.0, 1.02],
+            'high': [1.05, 1.06],
+            'low': [0.99, 1.01],
+            'close': [1.02, 1.04],
+            'volume': [1_000_000, 1_500_000],
+            'amount': [1_020_000.0, 1_560_000.0],
+        })
+        codes = ['513100.XSHG']
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.fund_etf_hist_sina', return_value=data):
+            result = load_all_etf_data(codes, cache_dir=cache_dir)
+
+        assert "存在零成交量日" not in caplog.text

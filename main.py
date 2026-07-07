@@ -34,11 +34,13 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
 
 
 def run_signal_mode():
-    """运行信号模式（占位，Task 11完善）"""
+    """运行信号模式 — 生成实盘信号"""
+    from signal_generator import generate_signal
     from strategy import setup_logger
 
     logger = setup_logger("trade")
-    logger.info("信号模式 - 待实现")
+    logger.info("信号模式启动")
+    generate_signal()
 
 
 def main():

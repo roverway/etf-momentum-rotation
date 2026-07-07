@@ -47,11 +47,13 @@ class TestMain:
         assert call_config.end_date == '2024-03-01'
         assert call_config.initial_cash == 1_000_000
 
-    def test_signal_command_runs(self):
-        """signal子命令可运行"""
+    def test_signal_command_calls_generate_signal(self):
+        """signal子命令调用generate_signal"""
         with patch('strategy.setup_logger') as mock_logger:
-            with patch.object(sys, 'argv', ['main.py', 'signal']):
-                main()  # Should not raise
+            with patch('signal_generator.generate_signal') as mock_gs:
+                with patch.object(sys, 'argv', ['main.py', 'signal']):
+                    main()
+        mock_gs.assert_called_once()
 
     def test_backtest_passes_start_end_to_config(self):
         """验证参数正确传递"""
