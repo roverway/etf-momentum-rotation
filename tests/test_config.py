@@ -5,7 +5,6 @@ from datetime import date
 import pytest
 
 from config import (
-    BENCHMARK_CODE,
     CHECK_RANGE,
     ETF_POOL,
     BacktestConfig,
@@ -29,7 +28,7 @@ class TestETFpool:
         assert CHECK_RANGE == 22
 
     def test_benchmark_code_constant(self):
-        assert BENCHMARK_CODE == '000300.XSHG'
+        assert BacktestConfig().benchmark_code == '000300.XSHG'
 
 
 class TestMapToSinaCode:

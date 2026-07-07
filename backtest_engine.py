@@ -424,7 +424,7 @@ def compute_and_print_metrics(
     portfolio_series = pd.Series(values, index=dates).sort_index()
 
     # ── 2. 加载基准数据 ─────────────────────────────────────────────────
-    benchmark_df = data_module.fetch_benchmark_data()
+    benchmark_df = data_module.fetch_benchmark_data(config.benchmark_code)
     benchmark_series = None
     if benchmark_df is not None and not benchmark_df.empty:
         bench_dates = pd.to_datetime(benchmark_df['date'])
@@ -550,12 +550,20 @@ def _print_metrics(metrics: dict) -> None:
     _print_line("最大回撤持续", f"{metrics.get('max_drawdown_duration', 0)} 天")
     print()
 
-    # 胜率
-    print("【胜率】")
+    # 胜率（战胜基准）
+    print("【胜率（战胜基准）】")
     _print_line("日胜率", f"{metrics.get('daily_win_rate', 0):.2f}%")
     _print_line("月胜率", f"{metrics.get('monthly_win_rate', 0):.2f}%")
     _print_line("季度胜率", f"{metrics.get('quarterly_win_rate', 0):.2f}%")
     _print_line("年胜率", f"{metrics.get('yearly_win_rate', 0):.2f}%")
+    print()
+    
+    # 胜率（策略正收益）
+    print("【胜率（策略正收益）】")
+    _print_line("日胜率", f"{metrics.get('daily_win_rate_abs', 0):.2f}%")
+    _print_line("月胜率", f"{metrics.get('monthly_win_rate_abs', 0):.2f}%")
+    _print_line("季度胜率", f"{metrics.get('quarterly_win_rate_abs', 0):.2f}%")
+    _print_line("年胜率", f"{metrics.get('yearly_win_rate_abs', 0):.2f}%")
     print()
 
     # 风险调整收益

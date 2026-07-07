@@ -278,6 +278,8 @@ class TestComputeAllMetrics:
             'max_drawdown_pct', 'max_drawdown_duration',
             'daily_win_rate', 'monthly_win_rate', 'quarterly_win_rate',
             'yearly_win_rate',
+            'daily_win_rate_abs', 'monthly_win_rate_abs', 'quarterly_win_rate_abs',
+            'yearly_win_rate_abs',
             'sharpe_ratio', 'sortino_ratio', 'calmar_ratio',
             'alpha', 'beta', 'information_ratio', 'tracking_error',
             'total_trades', 'avg_holding_days',

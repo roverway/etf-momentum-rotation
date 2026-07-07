@@ -411,6 +411,23 @@ def compute_all_metrics(
         result['quarterly_win_rate'] = 0.0
         result['yearly_win_rate'] = 0.0
 
+    # ── 胜率（基于策略正收益） ────────────────────────────────────
+    if len(daily_returns) > 0:
+        result['daily_win_rate_abs'] = win_rate(daily_returns, 'D')
+        if isinstance(daily_returns.index, pd.DatetimeIndex):
+            result['monthly_win_rate_abs'] = win_rate(daily_returns, 'M')
+            result['quarterly_win_rate_abs'] = win_rate(daily_returns, 'Q')
+            result['yearly_win_rate_abs'] = win_rate(daily_returns, 'Y')
+        else:
+            result['monthly_win_rate_abs'] = 0.0
+            result['quarterly_win_rate_abs'] = 0.0
+            result['yearly_win_rate_abs'] = 0.0
+    else:
+        result['daily_win_rate_abs'] = 0.0
+        result['monthly_win_rate_abs'] = 0.0
+        result['quarterly_win_rate_abs'] = 0.0
+        result['yearly_win_rate_abs'] = 0.0
+
     # ── 风险调整收益 ──────────────────────────────────────────────────
     result['sharpe_ratio'] = sharpe_ratio(daily_returns, risk_free_rate)
     result['sortino_ratio'] = sortino_ratio(daily_returns, risk_free_rate)
@@ -479,6 +496,10 @@ def _empty_result() -> dict:
         'monthly_win_rate': 0.0,
         'quarterly_win_rate': 0.0,
         'yearly_win_rate': 0.0,
+        'daily_win_rate_abs': 0.0,
+        'monthly_win_rate_abs': 0.0,
+        'quarterly_win_rate_abs': 0.0,
+        'yearly_win_rate_abs': 0.0,
         'sharpe_ratio': 0.0,
         'sortino_ratio': 0.0,
         'calmar_ratio': 0.0,

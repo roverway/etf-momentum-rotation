@@ -38,11 +38,16 @@ _METRIC_DEFS: list[tuple[str, str, str]] = [
     ('downside_deviation', '下行波动率', '{:.2f}%'),
     ('max_drawdown_pct', '最大回撤', '-{:.2f}%'),
     ('max_drawdown_duration', '最大回撤持续天数', '{}天'),
-    # ── 胜率类 ──
-    ('daily_win_rate', '日胜率', '{:.2f}%'),
-    ('monthly_win_rate', '月胜率', '{:.2f}%'),
-    ('quarterly_win_rate', '季胜率', '{:.2f}%'),
-    ('yearly_win_rate', '年胜率', '{:.2f}%'),
+    # ── 胜率类（战胜基准） ──
+    ('daily_win_rate', '日胜率(超基准)', '{:.2f}%'),
+    ('monthly_win_rate', '月胜率(超基准)', '{:.2f}%'),
+    ('quarterly_win_rate', '季胜率(超基准)', '{:.2f}%'),
+    ('yearly_win_rate', '年胜率(超基准)', '{:.2f}%'),
+    # ── 胜率类（策略正收益） ──
+    ('daily_win_rate_abs', '日胜率(正收益)', '{:.2f}%'),
+    ('monthly_win_rate_abs', '月胜率(正收益)', '{:.2f}%'),
+    ('quarterly_win_rate_abs', '季胜率(正收益)', '{:.2f}%'),
+    ('yearly_win_rate_abs', '年胜率(正收益)', '{:.2f}%'),
     # ── 风险调整收益 ──
     ('sharpe_ratio', '夏普比率', '{:.2f}'),
     ('sortino_ratio', '索提诺比率', '{:.2f}'),
@@ -118,11 +123,43 @@ def _write_html(fig: go.Figure, path: str) -> None:
 # Metrics Table
 # ---------------------------------------------------------------------------
 
-def _metrics_table(metrics: dict) -> go.Table:
-    """构建业绩指标表格。
+# ── Category groupings for multi-column table layout ──
+# Each tuple: (display_name, [metric_key, ...])
+_CATEGORIES: list[tuple[str, list[str]]] = [
+    ('基础信息', ['start_date', 'end_date', 'total_days', 'trading_years']),
+    ('收益', [
+        'strategy_cumulative_return_pct', 'strategy_annualized_return_pct',
+        'benchmark_cumulative_return_pct', 'benchmark_annualized_return_pct',
+        'excess_return_pct',
+    ]),
+    ('风险', [
+        'annualized_volatility', 'downside_deviation',
+        'max_drawdown_pct', 'max_drawdown_duration',
+    ]),
+    ('胜率', [
+        'daily_win_rate', 'monthly_win_rate', 'quarterly_win_rate',
+        'yearly_win_rate', 'daily_win_rate_abs', 'monthly_win_rate_abs',
+        'quarterly_win_rate_abs', 'yearly_win_rate_abs',
+    ]),
+    ('风险调整收益', ['sharpe_ratio', 'sortino_ratio', 'calmar_ratio']),
+    ('相对基准', ['alpha', 'beta', 'information_ratio', 'tracking_error']),
+    ('交易统计', ['total_trades', 'avg_holding_days']),
+]
 
-    两列: 指标名 | 值
-    行顺序: 按 _METRIC_DEFS 定义。
+# Column groups: arrange categories into 3 side-by-side blocks (6 cols total)
+_COLUMN_GROUPS: list[list[tuple[str, list[str]]]] = [
+    [_CATEGORIES[0], _CATEGORIES[1]],   # 基础信息 + 收益
+    [_CATEGORIES[2], _CATEGORIES[3]],   # 风险 + 胜率
+    [_CATEGORIES[4], _CATEGORIES[5], _CATEGORIES[6]],  # 风险调整收益 + 相对基准 + 交易统计
+]
+
+
+def _metrics_table(metrics: dict) -> go.Table:
+    """构建多列分组业绩指标表格。
+
+    将指标按类别分组为3列并排显示，每列由 (label, value) 对组成，
+    类别名称作为行内标题。
+    布局: 6 列 → (指标|值) × 3 组。
 
     Parameters
     ----------
@@ -134,35 +171,83 @@ def _metrics_table(metrics: dict) -> go.Table:
     go.Table
         Plotly Table 对象，适合放入 subplot 的第一行。
     """
-    names: list[str] = []
-    vals: list[str] = []
-
+    # ── 1. 构建 key -> (label, formatted_value) 查找表 ──
+    metric_map: dict[str, tuple[str, str]] = {}
     for key, label, fmt in _METRIC_DEFS:
         if key in metrics and metrics[key] is not None:
             val = metrics[key]
-            names.append(label)
             try:
-                vals.append(fmt.format(val))
+                formatted = fmt.format(val)
             except (ValueError, TypeError):
-                vals.append(str(val))
+                formatted = str(val)
+            metric_map[key] = (label, formatted)
+
+    # ── 2. 为每组构建行条目 ──
+    # 每条: ('header', cat_name) 或 ('metric', label, value) 或 ('empty',)
+    group_rows: list[list[tuple]] = [[], [], []]
+    for g_idx, group in enumerate(_COLUMN_GROUPS):
+        for cat_name, cat_keys in group:
+            available = [metric_map[k] for k in cat_keys if k in metric_map]
+            if not available:
+                continue
+            group_rows[g_idx].append(('header', cat_name))
+            for label, value in available:
+                group_rows[g_idx].append(('metric', label, value))
+
+    max_rows = max(len(r) for r in group_rows) if any(group_rows) else 0
+    for rows in group_rows:
+        while len(rows) < max_rows:
+            rows.append(('empty',))
+
+    # ── 3. 构建 per-column cell arrays ──
+    col_values: list[list[str]] = [[], [], [], [], [], []]
+    col_fills: list[list[str]] = [[], [], [], [], [], []]
+    row_norm = 0  # normalized row counter for alternating shading
+
+    for row_i in range(max_rows):
+        any_metric = any(g[row_i][0] == 'metric' for g in group_rows if row_i < len(g))
+        if any_metric:
+            row_norm += 1
+
+        for g_idx in range(3):
+            c_label = g_idx * 2
+            c_value = g_idx * 2 + 1
+            entry = group_rows[g_idx][row_i]
+
+            if entry[0] == 'header':
+                col_values[c_label].append(f'<b>{entry[1]}</b>')
+                col_values[c_value].append('')
+                col_fills[c_label].append('#e8edf3')  # subtle blue-gray header
+                col_fills[c_value].append('#e8edf3')
+            elif entry[0] == 'metric':
+                col_values[c_label].append(entry[1])
+                col_values[c_value].append(entry[2])
+                bg = '#fafafa' if (row_norm % 2 == 0) else '#ffffff'
+                col_fills[c_label].append(bg)
+                col_fills[c_value].append(bg)
+            else:  # empty
+                col_values[c_label].append('')
+                col_values[c_value].append('')
+                col_fills[c_label].append('#ffffff')
+                col_fills[c_value].append('#ffffff')
 
     return go.Table(
         header=dict(
-            values=['<b>指标</b>', '<b>值</b>'],
-            font=dict(size=13, color='#333333'),
+            values=['<b>指标</b>', '<b>值</b>'] * 3,
+            font=dict(size=12, color='#333333'),
             fill_color='#f0f0f0',
             align='left',
-            height=30,
+            height=28,
         ),
         cells=dict(
-            values=[names, vals],
-            font=dict(size=12, color=['#333333', '#006600']),
-            fill_color='white',
+            values=col_values,
+            font=dict(size=11, color=['#333333', '#006600'] * 3),
+            fill_color=col_fills,
             align='left',
-            height=24,
+            height=22,
             line=dict(color='#e0e0e0', width=1),
         ),
-        columnwidth=[180, 140],
+        columnwidth=[125, 90] * 3,
     )
 
 
@@ -203,7 +288,7 @@ def _build_report_figure(
     fig = make_subplots(
         rows=4,
         cols=1,
-        row_heights=[0.15, 0.35, 0.25, 0.25],
+        row_heights=[0.18, 0.34, 0.24, 0.24],
         subplot_titles=('', '', '', ''),
         vertical_spacing=0.07,
         specs=[

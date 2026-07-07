@@ -13,7 +13,7 @@ import os
 import akshare as ak
 import pandas as pd
 
-from config import BENCHMARK_CODE, map_to_sina_code
+from config import map_to_sina_code
 
 logger = logging.getLogger(__name__)
 

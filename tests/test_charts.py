@@ -81,11 +81,23 @@ class TestMetricsTable:
         assert any('指标' in str(v) for v in header_vals)
         assert any('值' in str(v) for v in header_vals)
 
+    def _all_names_and_vals(self, table: go.Table) -> tuple[list[str], list[str]]:
+        """Merge all 3 label columns and 3 value columns into flat lists.
+
+        The multi-column layout puts label:value pairs in columns
+        (0,1), (2,3), (4,5) respectively.
+        """
+        names: list[str] = []
+        vals: list[str] = []
+        for label_col, val_col in [(0, 1), (2, 3), (4, 5)]:
+            names.extend(table.cells.values[label_col])
+            vals.extend(table.cells.values[val_col])
+        return names, vals
+
     def test_includes_metric_name_and_formatted_value(self):
         """Row contains the Chinese label and formatted value."""
         result = _metrics_table({'sharpe_ratio': 1.25})
-        names = list(result.cells.values[0])
-        vals = list(result.cells.values[1])
+        names, vals = self._all_names_and_vals(result)
         assert '夏普比率' in names
         idx = names.index('夏普比率')
         assert vals[idx] == '1.25'
@@ -93,16 +105,14 @@ class TestMetricsTable:
     def test_strategy_return_shows_plus_sign(self):
         """Positive strategy return shows + sign."""
         result = _metrics_table({'strategy_cumulative_return_pct': 15.32})
-        names = list(result.cells.values[0])
-        vals = list(result.cells.values[1])
+        names, vals = self._all_names_and_vals(result)
         idx = names.index('策略累计收益率')
         assert vals[idx] == '+15.32%'
 
     def test_max_drawdown_shows_negative(self):
         """Max drawdown is displayed as negative."""
         result = _metrics_table({'max_drawdown_pct': 12.34})
-        names = list(result.cells.values[0])
-        vals = list(result.cells.values[1])
+        names, vals = self._all_names_and_vals(result)
         idx = names.index('最大回撤')
         assert vals[idx] == '-12.34%'
 
@@ -120,13 +130,13 @@ class TestMetricsTable:
             'total_trades': 45,
         }
         result = _metrics_table(metrics)
-        names = list(result.cells.values[0])
+        names, vals = self._all_names_and_vals(result)
         assert '开始日期' in names
         assert '夏普比率' in names
         assert '最大回撤' in names
         assert '策略累计收益率' in names
         assert '基准累计收益率' in names
-        assert '日胜率' in names
+        assert '日胜率(超基准)' in names  # full label from _METRIC_DEFS
         assert '总交易次数' in names
 
     def test_empty_metrics_returns_empty_table(self):
