@@ -245,15 +245,22 @@ def tracking_error(
 # 胜率
 # =====================================================================================
 
-def win_rate(returns: pd.Series, freq: str = 'D') -> float:
-    """统计正收益的比例。
+def win_rate(
+    returns: pd.Series,
+    freq: str = 'D',
+    benchmark_returns: pd.Series | None = None,
+) -> float:
+    """统计胜率（策略战胜基准的比例）。
 
     Parameters
     ----------
     returns : pd.Series
-        收益率序列，index 应为 DatetimeIndex（resample 需要）。
+        策略日收益率序列，index 应为 DatetimeIndex。
     freq : str, optional
-        重采样频率：'D'（日）, 'M'（月）, 'Q'（季）, 'Y'（年）。
+        频率：'D'（日）, 'M'（月）, 'Q'（季）, 'Y'（年）。
+    benchmark_returns : pd.Series, optional
+        基准日收益率序列。提供时，胜率 = 策略超额收益 > 0 的比例（即战胜基准）。
+        为 None 时，胜率 = 策略正收益的比例。
 
     Returns
     -------
@@ -264,16 +271,39 @@ def win_rate(returns: pd.Series, freq: str = 'D') -> float:
         return 0.0
 
     if freq != 'D':
-        if not isinstance(returns.index, pd.DatetimeIndex):
-            return 0.0
         freq_map = {'M': 'ME', 'Q': 'QE', 'Y': 'YE'}
         offset = freq_map.get(freq, freq)
-        resampled = returns.resample(offset).apply(lambda x: (1 + x).prod() - 1)
-    else:
-        resampled = returns
+        strat_resampled = returns.resample(offset).apply(
+            lambda x: (1 + x).prod() - 1,
+        )
 
-    wins = (resampled > 0).sum()
-    total = len(resampled)
+        if benchmark_returns is not None:
+            # 分别复利计算策略和基准的周期收益，再相减得超额收益
+            bench_resampled = benchmark_returns.resample(offset).apply(
+                lambda x: (1 + x).prod() - 1,
+            )
+            combined = pd.concat(
+                [strat_resampled, bench_resampled], axis=1, join='inner',
+            )
+            if len(combined) == 0:
+                return 0.0
+            excess = combined.iloc[:, 0] - combined.iloc[:, 1]
+        else:
+            excess = strat_resampled
+    else:
+        # 日胜率
+        if benchmark_returns is not None:
+            combined = pd.concat(
+                [returns, benchmark_returns], axis=1, join='inner',
+            )
+            if len(combined) == 0:
+                return 0.0
+            excess = combined.iloc[:, 0] - combined.iloc[:, 1]
+        else:
+            excess = returns
+
+    wins = (excess > 0).sum()
+    total = len(excess)
     return float(wins / total * 100) if total > 0 else 0.0
 
 
@@ -342,10 +372,12 @@ def compute_all_metrics(
             bench_cumulative, trading_years,
         )
         result['excess_return_pct'] = cumulative_return_pct - bench_cumulative
+        bench_daily_returns = benchmark_values.pct_change().dropna()
     else:
         result['benchmark_cumulative_return_pct'] = 0.0
         result['benchmark_annualized_return_pct'] = 0.0
         result['excess_return_pct'] = 0.0
+        bench_daily_returns = None
 
     # ── 风险 ──────────────────────────────────────────────────────────
     result['annualized_volatility'] = annualized_vol(daily_returns)
@@ -362,13 +394,13 @@ def compute_all_metrics(
     result['max_drawdown_pct'] = dd_pct
     result['max_drawdown_duration'] = dd_duration
 
-    # ── 胜率 ──────────────────────────────────────────────────────────
+    # ── 胜率（基于超额收益：战胜基准） ──────────────────────────────
     if len(daily_returns) > 0:
-        result['daily_win_rate'] = win_rate(daily_returns, 'D')
+        result['daily_win_rate'] = win_rate(daily_returns, 'D', benchmark_returns=bench_daily_returns)
         if isinstance(daily_returns.index, pd.DatetimeIndex):
-            result['monthly_win_rate'] = win_rate(daily_returns, 'M')
-            result['quarterly_win_rate'] = win_rate(daily_returns, 'Q')
-            result['yearly_win_rate'] = win_rate(daily_returns, 'Y')
+            result['monthly_win_rate'] = win_rate(daily_returns, 'M', benchmark_returns=bench_daily_returns)
+            result['quarterly_win_rate'] = win_rate(daily_returns, 'Q', benchmark_returns=bench_daily_returns)
+            result['yearly_win_rate'] = win_rate(daily_returns, 'Y', benchmark_returns=bench_daily_returns)
         else:
             result['monthly_win_rate'] = 0.0
             result['quarterly_win_rate'] = 0.0
