@@ -1,0 +1,6 @@
+.venv/
+data_cache/
+backtest_results/
+.omo/
+__pycache__/
+*.pyc
