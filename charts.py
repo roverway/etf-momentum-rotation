@@ -149,19 +149,18 @@ def _metrics_table(metrics: dict) -> go.Table:
     return go.Table(
         header=dict(
             values=['<b>指标</b>', '<b>值</b>'],
-            font=dict(size=13, color='white'),
-            fill_color='rgba(68, 68, 68, 0.9)',
+            font=dict(size=13, color='#333333'),
+            fill_color='#f0f0f0',
             align='left',
             height=30,
         ),
         cells=dict(
             values=[names, vals],
-            font=dict(size=12, color=['rgb(220, 220, 220)', 'rgb(0, 200, 100)']),
-            fill_color=[
-                ['rgba(50, 50, 50, 0.8)', 'rgba(40, 40, 40, 0.8)'] * ((len(names) + 1) // 2),
-            ],
+            font=dict(size=12, color=['#333333', '#006600']),
+            fill_color='white',
             align='left',
             height=24,
+            line=dict(color='#e0e0e0', width=1),
         ),
         columnwidth=[180, 140],
     )
