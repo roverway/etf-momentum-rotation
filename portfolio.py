@@ -90,6 +90,9 @@ class Portfolio:
         Raises:
             ValueError: If cash is insufficient.
         """
+        if quantity <= 0:
+            return
+
         effective_price = price * (1 + slippage_rate)
         cost = quantity * effective_price
         commission = round(cost * commission_rate, 2)
@@ -146,6 +149,9 @@ class Portfolio:
             ValueError: If the position does not exist or quantity exceeds
                 shares held.
         """
+        if quantity <= 0:
+            return 0.0
+
         if code not in self.positions:
             raise ValueError(f"Position {code} not held")
 

@@ -237,6 +237,10 @@ def run_backtest(
         # 5b. 可用历史数据 < CHECK_RANGE → 跳过
         max_rows = max(len(sub) for sub in etf_data_dict.values())
         if max_rows < CHECK_RANGE:
+            logger.warning(
+                "数据不足: 最大行数 %d < %d (CHECK_RANGE)，跳过 %s",
+                max_rows, CHECK_RANGE, trade_date,
+            )
             continue
 
         # 5c. 计算动量信号

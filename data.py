@@ -7,12 +7,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import akshare as ak
 import pandas as pd
 
 from config import map_to_sina_code
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_single_etf(sina_code: str) -> pd.DataFrame:
@@ -27,9 +30,14 @@ def fetch_single_etf(sina_code: str) -> pd.DataFrame:
     -------
     pd.DataFrame
         包含列: date, open, high, low, close, volume, amount。
+        网络失败时返回空 DataFrame。
     """
-    df = ak.fund_etf_hist_sina(symbol=sina_code)
-    return df
+    try:
+        df = ak.fund_etf_hist_sina(symbol=sina_code)
+        return df
+    except Exception as e:
+        logger.warning("⚠ 下载 %s 失败: %s", sina_code, e)
+        return pd.DataFrame()
 
 
 def load_all_etf_data(
@@ -71,6 +79,12 @@ def load_all_etf_data(
         else:
             df = fetch_single_etf(sina_code)
             df.to_csv(cache_path, index=False)
+
+        if 'volume' in df.columns:
+            zero_vol = df[df['volume'] == 0]
+            if not zero_vol.empty:
+                dates_str = ", ".join(str(d) for d in zero_vol['date'].tolist())
+                logger.warning("⚠ %s 存在零成交量日: %s", sina_code, dates_str)
 
         result[code] = df
 
