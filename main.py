@@ -22,7 +22,7 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
     )
     config.etf_codes = ETF_POOL  # duck-typing for backtest_engine.getattr
 
-    portfolio = run_backtest(config)
+    portfolio = run_backtest(config, output_dir='backtest_results/')
 
     logger.info("回测完成")
     logger.info("最终资产: %.2f", portfolio.total_value)
