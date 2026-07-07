@@ -52,37 +52,7 @@ class TestFetchSingleETF:
         with patch('data.ak.fund_etf_hist_sina') as mock_ak:
             mock_ak.return_value = mock_ak_data
             fetch_single_etf('sh513100')
-            mock_ak.assert_called_once_with(
-                symbol='sh513100', start_date=None, end_date=None
-            )
-
-    def test_empty_date_range_still_calls_akshare(self, mock_ak_data):
-        """空日期范围应全量获取（传 None 给 AKShare）"""
-        with patch('data.ak.fund_etf_hist_sina') as mock_ak:
-            mock_ak.return_value = mock_ak_data
-            fetch_single_etf('sz159915', start_date='', end_date='')
-            mock_ak.assert_called_once_with(
-                symbol='sz159915', start_date=None, end_date=None
-            )
-
-    def test_date_range_is_passed_none_when_empty(self, mock_ak_data):
-        """确认空的 start_date/end_date 以 None 传给 AKShare"""
-        with patch('data.ak.fund_etf_hist_sina') as mock_ak:
-            mock_ak.return_value = mock_ak_data
-            fetch_single_etf('sh518880', start_date='', end_date='')
-            # symbol only — no start_date/end_date in kwargs
-            call_kwargs = mock_ak.call_args[1]
-            assert call_kwargs.get('start_date') is None
-            assert call_kwargs.get('end_date') is None
-
-    def test_date_range_is_passed_when_provided(self, mock_ak_data):
-        """提供日期范围时应传给 AKShare"""
-        with patch('data.ak.fund_etf_hist_sina') as mock_ak:
-            mock_ak.return_value = mock_ak_data
-            fetch_single_etf('sh512890', start_date='2024-01-01', end_date='2024-01-31')
-            call_kwargs = mock_ak.call_args[1]
-            assert call_kwargs.get('start_date') == '2024-01-01'
-            assert call_kwargs.get('end_date') == '2024-01-31'
+            mock_ak.assert_called_once_with(symbol='sh513100')
 
     def test_data_types(self, mock_ak_data):
         """验证返回数据的基本类型正确"""
@@ -109,12 +79,8 @@ class TestLoadAllETFData:
 
         # 应调用 AKShare 两次（两只 ETF 均未缓存）
         assert mock_ak.call_count == 2
-        mock_ak.assert_any_call(
-            symbol='sh513100', start_date=None, end_date=None
-        )
-        mock_ak.assert_any_call(
-            symbol='sz159915', start_date=None, end_date=None
-        )
+        mock_ak.assert_any_call(symbol='sh513100')
+        mock_ak.assert_any_call(symbol='sz159915')
 
         # CSV 文件应已写入
         assert os.path.isfile(os.path.join(cache_dir, 'sh513100.csv'))
@@ -167,9 +133,7 @@ class TestLoadAllETFData:
             result = load_all_etf_data(codes, cache_dir=cache_dir)
 
         # 只有未命中的 159915 会调 AKShare
-        mock_ak.assert_called_once_with(
-            symbol='sz159915', start_date=None, end_date=None
-        )
+        mock_ak.assert_called_once_with(symbol='sz159915')
         assert set(result.keys()) == set(codes)
 
     def test_cached_csv_date_column_parsed_correctly(self, tmp_path, mock_ak_data):

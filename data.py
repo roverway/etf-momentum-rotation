@@ -15,33 +15,20 @@ import pandas as pd
 from config import map_to_sina_code
 
 
-def fetch_single_etf(
-    sina_code: str,
-    start_date: str = "",
-    end_date: str = "",
-) -> pd.DataFrame:
-    """从 AKShare 获取单只 ETF 日线数据。
+def fetch_single_etf(sina_code: str) -> pd.DataFrame:
+    """从 AKShare 获取单只 ETF 日线数据（全量历史）。
 
     Parameters
     ----------
     sina_code : str
         新浪格式代码，如 ``'sh513100'``。
-    start_date : str, optional
-        开始日期 ``'YYYY-MM-DD'``，默认空字符串表示全量获取。
-    end_date : str, optional
-        结束日期 ``'YYYY-MM-DD'``，默认空字符串表示最新。
 
     Returns
     -------
     pd.DataFrame
         包含列: date, open, high, low, close, volume, amount。
     """
-    # AKShare 的 fund_etf_hist_sina 接受 start_date / end_date (str or None)
-    df = ak.fund_etf_hist_sina(
-        symbol=sina_code,
-        start_date=start_date if start_date else None,
-        end_date=end_date if end_date else None,
-    )
+    df = ak.fund_etf_hist_sina(symbol=sina_code)
     return df
 
 
