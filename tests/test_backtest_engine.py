@@ -114,7 +114,7 @@ class TestRunBacktest:
         assert 'ETF_A' in portfolio.positions
         # Quantity shouldn't change after initial buy: we bought once, held
         # (no sell hence no second buy)
-        expected_qty = int(1_000_000 // 11.0)   # close on dates[2] = 10.0 + 2*0.5
+        expected_qty = int(1_000_000 // (11.0 * 1.0001 * 1.00025))  # slippage + commission
         assert portfolio.positions['ETF_A'].quantity == expected_qty
 
     @patch('trading_calendar.load_trading_calendar')

@@ -216,6 +216,8 @@ def run_backtest(
 
     # ── 4. 创建投资组合 ───────────────────────────────────────────────
     portfolio = Portfolio(config.initial_cash)
+    commission_rate = getattr(config, 'commission_rate', 0.00025)
+    slippage_rate = getattr(config, 'slippage_rate', 0.0001)
 
     # ── 5. 逐日回测 ───────────────────────────────────────────────────
     daily_snapshots: list[dict] = []
@@ -255,27 +257,37 @@ def run_backtest(
                     etf_data, current_holding, trade_date,
                 )
                 sell_qty = portfolio.positions[current_holding].quantity
-                portfolio.sell(current_holding, sell_qty, sell_price)
+                portfolio.sell(
+                    current_holding, sell_qty, sell_price,
+                    commission_rate=commission_rate,
+                    slippage_rate=slippage_rate,
+                )
+                sell_effective_price = sell_price * (1 - slippage_rate)
                 trade_log.append({
                     'date': trade_date,
                     'action': 'SELL',
                     'code': current_holding,
                     'shares': sell_qty,
                     'price': round(sell_price, 4),
-                    'value': round(sell_qty * sell_price, 2),
+                    'value': round(sell_qty * sell_effective_price, 2),
                 })
-            # 买入新目标
+            # 买入新目标（qty 需预留滑点+佣金空间）
             buy_price = _get_close_price(etf_data, target, trade_date)
-            qty = int(portfolio.cash // buy_price)
+            effective_buy_price = buy_price * (1 + slippage_rate)
+            qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
             if qty > 0:
-                portfolio.buy(target, qty, buy_price)
+                portfolio.buy(
+                    target, qty, buy_price,
+                    commission_rate=commission_rate,
+                    slippage_rate=slippage_rate,
+                )
                 trade_log.append({
                     'date': trade_date,
                     'action': 'BUY',
                     'code': target,
                     'shares': qty,
                     'price': round(buy_price, 4),
-                    'value': round(qty * buy_price, 2),
+                    'value': round(qty * effective_buy_price, 2),
                 })
 
         elif target is None and current_holding:
@@ -284,14 +296,19 @@ def run_backtest(
                 etf_data, current_holding, trade_date,
             )
             sell_qty = portfolio.positions[current_holding].quantity
-            portfolio.sell(current_holding, sell_qty, sell_price)
+            portfolio.sell(
+                current_holding, sell_qty, sell_price,
+                commission_rate=commission_rate,
+                slippage_rate=slippage_rate,
+            )
+            sell_effective_price = sell_price * (1 - slippage_rate)
             trade_log.append({
                 'date': trade_date,
                 'action': 'SELL',
                 'code': current_holding,
                 'shares': sell_qty,
                 'price': round(sell_price, 4),
-                'value': round(sell_qty * sell_price, 2),
+                'value': round(sell_qty * sell_effective_price, 2),
             })
 
         # 5f. 更新持仓市价（仅用于估值，不影响调仓）

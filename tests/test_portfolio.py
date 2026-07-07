@@ -33,7 +33,9 @@ class TestPortfolioBuy:
     def test_buy_new_position_deducts_cash(self):
         pf = Portfolio(cash=1_000_000)
         pf.buy('513100', 5000, 2.0)
-        assert pf.cash == 990_000.0
+        # effective_price=2.0002, cost=10001.0, comm=2.5, total=10003.5
+        # cash = 1_000_000 - 10003.5 = 989996.5
+        assert pf.cash == 989_996.5
         assert pf.positions['513100'].quantity == 5000
 
     def test_buy_new_position_sets_avg_price(self):
@@ -52,8 +54,8 @@ class TestPortfolioBuyMultiple:
 
     def test_two_buys_weighted_avg_price(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cost 10000, qty 5000
-        pf.buy('513100', 5000, 3.0)   # cost 15000, qty 5000
+        pf.buy('513100', 5000, 2.0)   # cost 10000, qty 5000, avg_price=2.0
+        pf.buy('513100', 5000, 3.0)   # cost 15000, qty 5000, avg_price=3.0
         # avg_price = (5000*2.0 + 5000*3.0) / 10000 = 2.5
         assert pf.positions['513100'].avg_price == 2.5
         assert pf.positions['513100'].quantity == 10000
@@ -74,9 +76,10 @@ class TestPortfolioSell:
 
     def test_sell_increases_cash(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cash=990000
-        pf.sell('513100', 2000, 2.5)   # cash += 2000*2.5 = 5000
-        assert pf.cash == 995_000.0
+        pf.buy('513100', 5000, 2.0)    # cash=989996.5
+        pf.sell('513100', 2000, 2.5)    # net=4998.25
+        # cash = 989996.5 + 4998.25 = 994994.75
+        assert pf.cash == 994_994.75
 
     def test_sell_returns_realized_pnl(self):
         pf = Portfolio(cash=1_000_000)
@@ -124,15 +127,16 @@ class TestPortfolioTotalValue:
 
     def test_total_value_with_positions(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cost=10000, mkt=5000*2.0=10000
-        assert pf.total_value == 1_000_000.0  # cash 990k + mkt 10k
+        pf.buy('513100', 5000, 2.0)
+        # cash=989996.5, mkt=5000*2.0=10000
+        assert pf.total_value == 1_000_000 - 10003.5 + 5000 * 2.0  # 999996.5
 
     def test_total_value_after_price_change(self):
         pf = Portfolio(cash=1_000_000)
         pf.buy('513100', 5000, 2.0)
         pf.update_price('513100', 3.0)
-        # cash=990k, position mkt=5000*3.0=15000
-        assert pf.total_value == 1_005_000.0
+        # cash=989996.5, position mkt=5000*3.0=15000
+        assert pf.total_value == 1_004_996.5
 
     def test_update_price_nonexistent_ignored(self):
         pf = Portfolio(cash=100_000)
@@ -175,25 +179,88 @@ class TestPortfolioMixedOperations:
 
     def test_buy_then_sell_then_buy_again(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cash=990k, qty=5000
-        pf.sell('513100', 5000, 2.5)  # cash=990k+12.5k=1,002,500, realized=2500
+        pf.buy('513100', 5000, 2.0)   # cash=989996.5
+        pf.sell('513100', 5000, 2.5)  # cash=989996.5+12495.63=1,002,492.13
 
-        pf.buy('513100', 3000, 3.0)   # cash=1,002,500-9000=993,500, qty=3000
-        assert pf.cash == 993_500.0
+        pf.buy('513100', 3000, 3.0)   # cash=1,002,492.13-9003.15≈993,488.98
+        assert pf.cash == pytest.approx(993_488.98)
         assert pf.positions['513100'].quantity == 3000
         assert pf.total_pnl == 2500.0
 
     def test_scenario_trading_sequence(self):
         """Full scenario: buy ETF-A, buy ETF-B, sell part of A, update prices."""
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cash=990k
-        pf.buy('159915', 3000, 1.0)   # cash=987k
-        pf.sell('513100', 2000, 2.5)  # cash=987k+5k=992k, realized=1000
+        pf.buy('513100', 5000, 2.0)   # cash=989996.5
+        pf.buy('159915', 3000, 1.0)   # cash=989996.5-3001.05=986995.45
+        pf.sell('513100', 2000, 2.5)  # cash=986995.45+4998.25=991993.7
 
         assert pf.positions['513100'].quantity == 3000
         assert pf.total_pnl == 1000.0
 
         pf.update_price('513100', 3.0)   # mkt=3000*3.0=9000
         pf.update_price('159915', 1.2)   # mkt=3000*1.2=3600
-        # total_value = cash 992k + 9000 + 3600 = 1,004,600
-        assert pf.total_value == 1_004_600.0
+        # total_value = cash 991993.7 + 9000 + 3600 = 1,004,593.70
+        assert pf.total_value == 1_004_593.70
+
+
+# =====================================================================
+# New tests: commission & slippage
+# =====================================================================
+
+class TestPortfolioCommission:
+    """Commission deduction on buy/sell."""
+
+    def test_buy_commission_deducted(self):
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0.00025, slippage_rate=0)
+        # cost = 5000 * 2.0 = 10000
+        # commission = round(10000 * 0.00025, 2) = 2.5
+        # cash = 1_000_000 - 10000 - 2.5 = 989997.5
+        assert pf.cash == 989_997.5
+
+    def test_sell_commission_deducted(self):
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0, slippage_rate=0)
+        pf.sell('513100', 2000, 2.5, commission_rate=0.00025, slippage_rate=0)
+        # proceeds = 2000 * 2.5 = 5000
+        # commission = round(5000 * 0.00025, 2) = 1.25
+        # net = 5000 - 1.25 = 4998.75
+        # cash = 990000 + 4998.75 = 994998.75
+        assert pf.cash == 994_998.75
+
+    def test_commission_rate_zero(self):
+        """佣金率为0时行为不变"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0, slippage_rate=0)
+        assert pf.cash == 990_000.0
+        pf.sell('513100', 2000, 2.5, commission_rate=0, slippage_rate=0)
+        assert pf.cash == 995_000.0
+
+    def test_avg_price_uses_original_price(self):
+        """avg_price 用原始报价，不是含滑点的价格"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0.00025, slippage_rate=0.0001)
+        assert pf.positions['513100'].avg_price == 2.0
+
+
+class TestPortfolioSlippage:
+    """Slippage effect on buy/sell prices."""
+
+    def test_buy_slippage_increases_cost(self):
+        """验证买入成交价高于报价"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0, slippage_rate=0.0001)
+        # effective_price = 2.0 * 1.0001 = 2.0002
+        # cost = 5000 * 2.0002 = 10001.0
+        # cash = 1_000_000 - 10001.0 = 989999.0
+        assert pf.cash == 989_999.0
+
+    def test_sell_slippage_decreases_proceeds(self):
+        """验证卖出成交价低于报价"""
+        pf = Portfolio(cash=1_000_000)
+        pf.buy('513100', 5000, 2.0, commission_rate=0, slippage_rate=0)
+        pf.sell('513100', 2000, 2.5, commission_rate=0, slippage_rate=0.0001)
+        # effective_price = 2.5 * 0.9999 = 2.49975
+        # proceeds = 2000 * 2.49975 = 4999.5
+        # cash = 990000 + 4999.5 = 994999.5
+        assert pf.cash == 994_999.5

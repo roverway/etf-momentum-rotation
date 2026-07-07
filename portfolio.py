@@ -66,33 +66,48 @@ class Portfolio:
         """Cumulative realized PnL across all trades (sell returns)."""
         return self._total_pnl
 
-    def buy(self, code: str, quantity: int, price: float) -> None:
+    def buy(
+        self,
+        code: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.00025,
+        slippage_rate: float = 0.0001,
+    ) -> None:
         """Buy shares of an ETF.
 
-        Deducts cost from cash. If the ETF is already held, updates the
-        average cost price using weighted average.
+        Applies slippage to the execution price and deducts commission
+        from cash. The position's average cost price uses the *original*
+        quoted price (not the slippage-adjusted price).
 
         Args:
             code: ETF code.
             quantity: Number of shares to buy.
-            price: Price per share.
+            price: Quoted price per share.
+            commission_rate: Commission rate (default 0.00025 = 万2.5).
+            slippage_rate: Slippage rate (default 0.0001 = 0.01%).
 
         Raises:
             ValueError: If cash is insufficient.
         """
-        cost = quantity * price
-        if cost > self.cash:
+        effective_price = price * (1 + slippage_rate)
+        cost = quantity * effective_price
+        commission = round(cost * commission_rate, 2)
+        total_cost = cost + commission
+
+        if total_cost > self.cash:
             raise ValueError(
-                f"Insufficient cash: need {cost:.2f}, have {self.cash:.2f}"
+                f"Insufficient cash: need {total_cost:.2f}, have {self.cash:.2f}"
             )
 
-        self.cash -= cost
+        self.cash -= total_cost
 
+        # avg_price uses original price (no slippage / commission)
         if code in self.positions:
             pos = self.positions[code]
-            total_cost = pos.avg_price * pos.quantity + cost
+            total_cost_base = pos.avg_price * pos.quantity + quantity * price
             total_qty = pos.quantity + quantity
-            pos.avg_price = total_cost / total_qty
+            pos.avg_price = total_cost_base / total_qty
             pos.quantity = total_qty
         else:
             self.positions[code] = Position(
@@ -102,16 +117,27 @@ class Portfolio:
                 current_price=price,
             )
 
-    def sell(self, code: str, quantity: int, price: float) -> float:
+    def sell(
+        self,
+        code: str,
+        quantity: int,
+        price: float,
+        commission_rate: float = 0.00025,
+        slippage_rate: float = 0.0001,
+    ) -> float:
         """Sell shares of an ETF.
 
-        Adds proceeds to cash, returns realized PnL, and removes the
-        position if fully closed.
+        Applies slippage to the execution price and deducts commission
+        from the proceeds before adding to cash. Realized PnL is
+        calculated using the *original* quoted price (not the
+        slippage-adjusted price).
 
         Args:
             code: ETF code.
             quantity: Number of shares to sell.
-            price: Price per share.
+            price: Quoted price per share.
+            commission_rate: Commission rate (default 0.00025 = 万2.5).
+            slippage_rate: Slippage rate (default 0.0001 = 0.01%).
 
         Returns:
             Realized PnL: (price - avg_price) * quantity.
@@ -129,11 +155,15 @@ class Portfolio:
                 f"Insufficient shares: want {quantity}, have {pos.quantity}"
             )
 
+        effective_price = price * (1 - slippage_rate)
+        proceeds = quantity * effective_price
+        commission = round(proceeds * commission_rate, 2)
+        net_proceeds = proceeds - commission
+
         realized = (price - pos.avg_price) * quantity
         self._total_pnl += realized
 
-        proceeds = quantity * price
-        self.cash += proceeds
+        self.cash += net_proceeds
 
         pos.quantity -= quantity
         if pos.quantity == 0:
