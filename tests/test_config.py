@@ -5,6 +5,7 @@ from datetime import date
 import pytest
 
 from config import (
+    BENCHMARK_CODE,
     CHECK_RANGE,
     ETF_POOL,
     BacktestConfig,
@@ -26,6 +27,9 @@ class TestETFpool:
 
     def test_check_range(self):
         assert CHECK_RANGE == 22
+
+    def test_benchmark_code_constant(self):
+        assert BENCHMARK_CODE == '000300.XSHG'
 
 
 class TestMapToSinaCode:
@@ -52,8 +56,10 @@ class TestBacktestConfig:
         assert cfg.start_date == '2013-01-01'
         assert cfg.end_date == ''
         assert cfg.initial_cash == 1_000_000
-        assert cfg.commission_rate == 0.00025
-        assert cfg.slippage_rate == 0.0001
+        assert cfg.commission_rate == 0.00015
+        assert cfg.slippage_rate == 0.0
+        assert cfg.cash_return_rate == 0.0
+        assert cfg.benchmark_code == '000300.XSHG'
 
     def test_custom_initial_cash(self):
         cfg = BacktestConfig(initial_cash=500_000)
@@ -70,6 +76,18 @@ class TestBacktestConfig:
     def test_custom_commission_rate(self):
         cfg = BacktestConfig(commission_rate=0.001)
         assert cfg.commission_rate == 0.001
+
+    def test_custom_slippage_rate(self):
+        cfg = BacktestConfig(slippage_rate=0.0005)
+        assert cfg.slippage_rate == 0.0005
+
+    def test_custom_cash_return_rate(self):
+        cfg = BacktestConfig(cash_return_rate=0.02)
+        assert cfg.cash_return_rate == 0.02
+
+    def test_custom_benchmark_code(self):
+        cfg = BacktestConfig(benchmark_code='000688.XSHG')
+        assert cfg.benchmark_code == '000688.XSHG'
 
     def test_is_dataclass(self):
         import dataclasses

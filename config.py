@@ -7,26 +7,30 @@ from dataclasses import dataclass, field
 # =====================================================================================
 
 ETF_POOL = [
-    '513100.XSHG',  # 纳指ETF
-    '159915.XSHE',  # 创业板ETF
-    '518880.XSHG',  # 黄金ETF
-    '512890.XSHG',  # 红利低波ETF
+    "513100.XSHG",  # 纳指ETF
+    "159915.XSHE",  # 创业板ETF
+    "518880.XSHG",  # 黄金ETF
+    "512890.XSHG",  # 红利低波ETF
 ]
 
 CHECK_RANGE = 22  # 交易日；22 ≈ 1 个月
+BENCHMARK_CODE = "000300.XSHG"  # 沪深300基准代码
 
 
 # =====================================================================================
 # 回测配置 (数据类)
 # =====================================================================================
 
+
 @dataclass
 class BacktestConfig:
-    start_date: str = '2013-01-01'
-    end_date: str = ''          # 空字符串 ≡ 今天
+    start_date: str = "2014-01-01"
+    end_date: str = ""  # 空字符串 ≡ 今天
     initial_cash: float = 1_000_000
-    commission_rate: float = 0.00025   # 万2.5
-    slippage_rate: float = 0.0001      # 万1
+    commission_rate: float = 0.0008  # 万8
+    slippage_rate: float = 0.0  # 无滑点
+    cash_return_rate: float = 0.0  # 现金收益率（年化）
+    benchmark_code: str = "000300.XSHG"  # 基准代码，沪深300
 
 
 # =====================================================================================
@@ -34,8 +38,8 @@ class BacktestConfig:
 # =====================================================================================
 
 _SUFFIX_MAP = {
-    '.XSHG': 'sh',
-    '.XSHE': 'sz',
+    ".XSHG": "sh",
+    ".XSHE": "sz",
 }
 
 

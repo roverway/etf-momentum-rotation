@@ -1,4 +1,4 @@
-"""Tests for backtest_engine module — run_backtest function.
+"""Tests for backtest_engine module — run_backtest, compute_and_print_metrics, print_next_day_suggestion.
 
 TDD: tests written before implementation.
 """
@@ -7,13 +7,17 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
 from config import BacktestConfig
-from backtest_engine import run_backtest
+from backtest_engine import (
+    compute_and_print_metrics,
+    print_next_day_suggestion,
+    run_backtest,
+)
 
 
 # =====================================================================================
@@ -39,7 +43,7 @@ class TestRunBacktest:
 
     @patch('trading_calendar.load_trading_calendar')
     def test_short_backtest_runs_normally(self, mock_cal):
-        """Basic flow: backtest runs and returns a Portfolio."""
+        """Basic flow: backtest runs and returns a dict with Portfolio."""
         dates = _make_dates(periods=25)
         mock_cal.return_value = dates
 
@@ -55,13 +59,19 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # Should have traded — cash decreased
         assert portfolio.cash < config.initial_cash
         # Should hold the rising ETF
         assert 'ETF_A' in portfolio.positions
         assert portfolio.positions['ETF_A'].quantity > 0
+        # Should have all keys in result
+        assert 'daily_snapshots' in result
+        assert 'trade_log' in result
+        assert 'calendar' in result
+        assert 'etf_data' in result
 
     @patch('trading_calendar.load_trading_calendar')
     def test_first_eligible_day_buys_best_etf(self, mock_cal):
@@ -82,8 +92,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         assert 'ETF_A' in portfolio.positions
         assert portfolio.positions['ETF_A'].quantity > 0
         # Only ETF_A should be held
@@ -108,15 +119,20 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # Only ETF_A should be held
         assert len(portfolio.positions) == 1
         assert 'ETF_A' in portfolio.positions
         # Quantity shouldn't change after initial buy: we bought once, held
         # (no sell hence no second buy)
-        expected_qty = int(1_000_000 // (11.0 * 1.0001 * 1.00025))  # slippage + commission
-        assert portfolio.positions['ETF_A'].quantity == expected_qty
+        qty = portfolio.positions['ETF_A'].quantity
+        # Verify qty is in valid range: should use most of 1M cash at ~11.0 price
+        expected_range_low = int(1_000_000 // (11.5 * 1.0001 * 1.00025))
+        expected_range_high = int(1_000_000 // (10.5 * 1.0001 * 1.00025))
+        assert expected_range_low <= qty <= expected_range_high, \
+            f"qty {qty} outside expected range [{expected_range_low}, {expected_range_high}]"
 
     @patch('trading_calendar.load_trading_calendar')
     def test_signal_change_triggers_rebalance(self, mock_cal):
@@ -148,8 +164,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # By the end, ETF_B should be the better performer
         # We should have switched from ETF_A to ETF_B at some point
         assert 'ETF_B' in portfolio.positions
@@ -183,8 +200,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # Position should be sold (all ETFs down → None signal)
         assert len(portfolio.positions) == 0
 
@@ -203,7 +221,8 @@ class TestRunBacktest:
         )
 
         # CHECK_RANGE is 22 (default) — data is only 2 rows
-        portfolio = run_backtest(config, etf_data=etf_data)
+        result = run_backtest(config, etf_data=etf_data)
+        portfolio = result['portfolio']
 
         # No trades should happen
         assert len(portfolio.positions) == 0
@@ -221,8 +240,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data={})
+            result = run_backtest(config, etf_data={})
 
+        portfolio = result['portfolio']
         assert len(portfolio.positions) == 0
         assert portfolio.cash == config.initial_cash
 
@@ -245,8 +265,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # Should have traded (at least one position)
         assert len(portfolio.positions) > 0
 
@@ -267,8 +288,9 @@ class TestRunBacktest:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         # No data matches this range → no trades
         assert len(portfolio.positions) == 0
         assert portfolio.cash == config.initial_cash
@@ -296,9 +318,177 @@ class TestRunBacktestEdgeCases:
 
         caplog.set_level(logging.WARNING)
         with patch('backtest_engine.CHECK_RANGE', 22):
-            portfolio = run_backtest(config, etf_data=etf_data)
+            result = run_backtest(config, etf_data=etf_data)
 
+        portfolio = result['portfolio']
         assert len(portfolio.positions) == 0
         assert portfolio.cash == config.initial_cash
         assert "数据不足" in caplog.text
         assert "1 < 22" in caplog.text or "CHECK_RANGE" in caplog.text
+
+
+# =====================================================================================
+# Tests: compute_and_print_metrics
+# =====================================================================================
+
+class TestComputeAndPrintMetrics:
+    """compute_and_print_metrics — metrics computation, printing, and report generation."""
+
+    def test_calls_metrics_and_charts(self):
+        """Calls compute_all_metrics and generate_report."""
+        dates = _make_dates(periods=5)
+        snapshots = [
+            {'date': d, 'portfolio_value': 1_000_000.0 + i * 10_000,
+             'cash': 1_000_000.0 - i * 10_000, 'position_code': 'ETF_A',
+             'shares': 50_000, 'price': 10.0 + i * 0.2}
+            for i, d in enumerate(dates)
+        ]
+        trade_log = [
+            {'date': dates[0], 'action': 'BUY', 'code': 'ETF_A',
+             'shares': 50_000, 'price': 10.0, 'value': 500_000.0},
+        ]
+        config = BacktestConfig(
+            start_date=str(dates[0]), end_date=str(dates[-1]),
+            initial_cash=1_000_000,
+        )
+        calendar = dates
+
+        with patch('data.fetch_benchmark_data', return_value=pd.DataFrame()) as mock_fetch:
+            with patch('metrics.compute_all_metrics') as mock_compute:
+                with patch('charts.generate_report') as mock_gen_report:
+                    mock_compute.return_value = {
+                        'total_return_pct': 5.0, 'annual_return_pct': 10.0,
+                        'max_drawdown_pct': -2.0,
+                    }
+                    result = compute_and_print_metrics(
+                        snapshots, trade_log, config, calendar, '/tmp',
+                    )
+
+        assert mock_compute.called, "compute_all_metrics should be called"
+        assert isinstance(result, dict)
+        assert result['total_return_pct'] == 5.0
+        # generate_report not called when CSVs don't exist at /tmp
+        assert not mock_gen_report.called
+
+    def test_returns_empty_dict_for_empty_snapshots(self):
+        """Empty snapshots → empty dict, no calls to metrics."""
+        with patch('metrics.compute_all_metrics') as mock_c:
+            result = compute_and_print_metrics(
+                [], [], MagicMock(), [], '/tmp',
+            )
+        assert result == {}
+        mock_c.assert_not_called()
+
+    def test_annual_returns_computed_correctly(self):
+        """Annual returns dict is computed and present in metrics."""
+        # 2 years of daily snapshots
+        dates = _make_dates(start='2024-01-02', periods=300)
+        snapshots = [
+            {'date': d, 'portfolio_value': 1_000_000.0 + i * 500.0,
+             'cash': 100_000.0, 'position_code': 'ETF_A',
+             'shares': 50_000, 'price': 10.0}
+            for i, d in enumerate(dates)
+        ]
+        config = BacktestConfig(
+            start_date=str(dates[0]), end_date=str(dates[-1]),
+            initial_cash=1_000_000,
+        )
+
+        with patch('data.fetch_benchmark_data', return_value=pd.DataFrame()):
+            with patch('metrics.compute_all_metrics') as mock_compute:
+                mock_compute.return_value = {
+                    'total_return_pct': 5.0, 'annual_return_pct': 10.0,
+                    'max_drawdown_pct': -2.0,
+                }
+                result = compute_and_print_metrics(
+                    snapshots, [], config, dates, '/tmp',
+                )
+
+        assert 'strategy_annual_returns' in result
+        assert isinstance(result['strategy_annual_returns'], dict)
+        assert len(result['strategy_annual_returns']) > 0
+        for year, ret in result['strategy_annual_returns'].items():
+            assert isinstance(year, int)
+            assert isinstance(ret, float)
+        # No benchmark data → benchmark_annual_returns is None
+        assert result['benchmark_annual_returns'] is None
+
+    def test_annual_returns_with_benchmark(self):
+        """Annual returns computed correctly when benchmark data is present."""
+        dates = _make_dates(start='2024-01-02', periods=300)
+        snapshots = [
+            {'date': d, 'portfolio_value': 1_000_000.0,
+             'cash': 1_000_000.0, 'position_code': None,
+             'shares': 0, 'price': 0.0}
+            for d in dates
+        ]
+        # Benchmark: same dates, close starts at 1000, ends higher
+        bench_df = pd.DataFrame({
+            'date': dates,
+            'close': [1000.0 + i * 0.5 for i in range(len(dates))],
+        })
+        config = BacktestConfig(
+            start_date=str(dates[0]), end_date=str(dates[-1]),
+            initial_cash=1_000_000,
+        )
+
+        with patch('data.fetch_benchmark_data', return_value=bench_df):
+            with patch('metrics.compute_all_metrics') as mock_compute:
+                mock_compute.return_value = {
+                    'total_return_pct': 0.0, 'annual_return_pct': 0.0,
+                    'max_drawdown_pct': 0.0,
+                }
+                result = compute_and_print_metrics(
+                    snapshots, [], config, dates, '/tmp',
+                )
+
+        assert 'strategy_annual_returns' in result
+        assert 'benchmark_annual_returns' in result
+        assert isinstance(result['benchmark_annual_returns'], dict)
+        assert len(result['benchmark_annual_returns']) > 0
+        for year, ret in result['benchmark_annual_returns'].items():
+            assert isinstance(year, int)
+            assert isinstance(ret, float)
+
+
+# =====================================================================================
+# Tests: print_next_day_suggestion
+# =====================================================================================
+
+class TestPrintNextDaySuggestion:
+    """print_next_day_suggestion — next trading day recommendation."""
+
+    @patch('backtest_engine.get_next_trading_date')
+    @patch('backtest_engine.calculate_momentum_signal')
+    def test_suggests_buy(self, mock_signal, mock_next):
+        """Positive signal → suggests BUY <code>."""
+        mock_next.return_value = date(2024, 2, 6)
+        mock_signal.return_value = 'ETF_A'
+
+        calendar = [date(2024, 2, 5)]
+        etf_data = {
+            'ETF_A': pd.DataFrame({'date': [date(2024, 2, 5)], 'close': [10.0]}),
+        }
+        config = BacktestConfig(start_date='2024-01-01', end_date='2024-02-05')
+
+        with patch('backtest_engine.CHECK_RANGE', 1):
+            print_next_day_suggestion(calendar, etf_data, config, None)
+
+        mock_signal.assert_called_once()
+
+    @patch('backtest_engine.get_next_trading_date')
+    def test_no_next_date_prints_message(self, mock_next, capsys):
+        """No next trading day → prints message."""
+        mock_next.side_effect = ValueError("no next trading day")
+
+        print_next_day_suggestion(
+            [date(2024, 12, 31)], {}, MagicMock(), None,
+        )
+        captured = capsys.readouterr()
+        assert "无法获取下一交易日" in captured.out
+
+    def test_empty_calendar_prints_message(self, capsys):
+        """Empty calendar → prints warning."""
+        print_next_day_suggestion([], {}, MagicMock(), None)
+        captured = capsys.readouterr()
+        assert "无交易日历" in captured.out

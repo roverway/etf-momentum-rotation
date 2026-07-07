@@ -1,14 +1,15 @@
 """backtest_engine.py — 回测引擎骨架。
 
 连接交易日历、ETF 数据、组合跟踪、策略逻辑四大模块，按逐个交易日
-执行动量信号计算与调仓，返回最终的 ``Portfolio`` 对象。
+执行动量信号计算与调仓，返回包含 Portfolio + 快照 + 日志的字典。
 
 用法
 ----
 ::
 
     from config import BacktestConfig
-    portfolio = run_backtest(BacktestConfig(start_date='2024-01-01'))
+    result = run_backtest(BacktestConfig(start_date='2024-01-01'))
+    portfolio = result['portfolio']
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from config import ETF_POOL, CHECK_RANGE, BacktestConfig
 from data import load_all_etf_data
 from portfolio import Portfolio
 from strategy import calculate_momentum_signal
-from trading_calendar import load_trading_calendar
+from trading_calendar import get_next_trading_date, load_trading_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -174,11 +175,23 @@ def compute_summary(
 # Public API
 # =====================================================================================
 
+def _empty_result(config) -> dict:
+    """Return an empty result dict (no trades possible)."""
+    portfolio = Portfolio(config.initial_cash)
+    return {
+        'portfolio': portfolio,
+        'daily_snapshots': [],
+        'trade_log': [],
+        'calendar': [],
+        'etf_data': {},
+    }
+
+
 def run_backtest(
     config,
     etf_data: Optional[dict[str, pd.DataFrame]] = None,
     output_dir: Optional[str] = None,
-) -> Portfolio:
+) -> dict:
     """执行完整回测。
 
     Parameters
@@ -192,8 +205,14 @@ def run_backtest(
 
     Returns
     -------
-    Portfolio
-        回测结束后的投资组合，包含最终持仓、现金、已实现盈亏等信息。
+    dict
+        {
+            'portfolio': Portfolio,          # 最终投资组合
+            'daily_snapshots': list[dict],   # 每日净值快照
+            'trade_log': list[dict],         # 交易记录
+            'calendar': list[date],          # 交易日历
+            'etf_data': dict[str, pd.DataFrame],  # ETF 数据引用
+        }
     """
     # ── 1. 交易日历 ────────────────────────────────────────────────────
     calendar: list[date] = load_trading_calendar()
@@ -204,7 +223,7 @@ def run_backtest(
     calendar = [d for d in calendar if start <= d <= end]
 
     if not calendar:
-        return Portfolio(config.initial_cash)
+        return _empty_result(config)
 
     # ── 3. 加载 ETF 数据 ──────────────────────────────────────────────
     etf_codes = getattr(config, 'etf_codes', ETF_POOL)
@@ -212,7 +231,7 @@ def run_backtest(
         etf_data = load_all_etf_data(etf_codes)
 
     if not etf_data:
-        return Portfolio(config.initial_cash)
+        return _empty_result(config)
 
     # ── 4. 创建投资组合 ───────────────────────────────────────────────
     portfolio = Portfolio(config.initial_cash)
@@ -351,4 +370,301 @@ def run_backtest(
     if output_dir is not None:
         save_results(portfolio, daily_snapshots, trade_log, output_dir=output_dir)
 
-    return portfolio
+    return {
+        'portfolio': portfolio,
+        'daily_snapshots': daily_snapshots,
+        'trade_log': trade_log,
+        'calendar': calendar,
+        'etf_data': etf_data,
+    }
+
+
+# =====================================================================================
+# Metrics, reports & next-day suggestion
+# =====================================================================================
+
+def compute_and_print_metrics(
+    daily_snapshots: list[dict],
+    trade_log: list[dict],
+    config,
+    calendar: list[date],
+    output_dir: str,
+) -> dict:
+    """计算全套业绩指标、打印到终端、生成 HTML 报告。
+
+    Parameters
+    ----------
+    daily_snapshots : list[dict]
+        每日净值快照（来自 ``run_backtest`` 返回值）。
+    trade_log : list[dict]
+        交易记录列表。
+    config : BacktestConfig
+        回测配置。
+    calendar : list[date]
+        交易日历。
+    output_dir : str
+        CSV 文件所在目录 / 报告输出目录。
+
+    Returns
+    -------
+    dict
+        完整指标字典（与 ``metrics.compute_all_metrics`` 返回值相同）。
+    """
+    import data as data_module
+    import metrics as metrics_module
+    from charts import generate_report
+
+    if not daily_snapshots:
+        print("⚠ 无回测数据，无法计算指标。")
+        return {}
+
+    # ── 1. 转换 daily_snapshots → pd.Series ──────────────────────────────
+    dates = pd.to_datetime([s['date'] for s in daily_snapshots])
+    values = [s['portfolio_value'] for s in daily_snapshots]
+    portfolio_series = pd.Series(values, index=dates).sort_index()
+
+    # ── 2. 加载基准数据 ─────────────────────────────────────────────────
+    benchmark_df = data_module.fetch_benchmark_data()
+    benchmark_series = None
+    if benchmark_df is not None and not benchmark_df.empty:
+        bench_dates = pd.to_datetime(benchmark_df['date'])
+        bench_close = benchmark_df['close'].astype(float)
+        # 归一化基准到策略起始日
+        bench_series_raw = pd.Series(bench_close.values, index=bench_dates).sort_index()
+        # 裁剪到回测区间内
+        bench_series_raw = bench_series_raw[
+            (bench_series_raw.index >= portfolio_series.index[0]) &
+            (bench_series_raw.index <= portfolio_series.index[-1])
+        ]
+        if len(bench_series_raw) > 1:
+            # 归一化到起始净值 = 策略起始净值
+            first_nav = portfolio_series.iloc[0]
+            benchmark_series = bench_series_raw / bench_series_raw.iloc[0] * first_nav
+
+    # ── 3. 调用 compute_all_metrics ─────────────────────────────────────
+    metrics = metrics_module.compute_all_metrics(
+        portfolio_series,
+        benchmark_values=benchmark_series,
+        trade_dates=calendar,
+        risk_free_rate=0.0,
+    )
+
+    # Augment metrics with basic info
+    metrics['start_date'] = str(calendar[0]) if calendar else ''
+    metrics['end_date'] = str(calendar[-1]) if calendar else ''
+    metrics['total_days'] = len(calendar)
+    metrics['initial_capital'] = config.initial_cash
+    metrics['final_value'] = portfolio_series.iloc[-1] if len(portfolio_series) > 0 else 0
+
+    # Trade stats from trade_log
+    metrics['total_trades'] = len(trade_log)
+    if len(trade_log) > 1:
+        # Average holding days: compute how many days between buy and corresponding sell
+        buy_dates = {}
+        holding_durations = []
+        for trade in trade_log:
+            tdate = trade['date'] if isinstance(trade['date'], date) else date.fromisoformat(str(trade['date']))
+            if trade['action'] == 'BUY':
+                buy_dates[trade['code']] = tdate
+            elif trade['action'] == 'SELL' and trade['code'] in buy_dates:
+                diff = (tdate - buy_dates[trade['code']]).days
+                holding_durations.append(diff)
+                del buy_dates[trade['code']]
+        if holding_durations:
+            metrics['avg_holding_days'] = round(sum(holding_durations) / len(holding_durations))
+        else:
+            metrics['avg_holding_days'] = 0
+    else:
+        metrics['avg_holding_days'] = 0
+
+    # ── 年度收益率计算 ──
+    daily_returns = portfolio_series.pct_change().dropna()
+    strat_annual = daily_returns.groupby(daily_returns.index.year).apply(
+        lambda x: (1 + x).prod() - 1
+    ) * 100
+    metrics['strategy_annual_returns'] = strat_annual.to_dict()
+
+    if benchmark_series is not None:
+        bench_daily_returns = benchmark_series.pct_change().dropna()
+        bench_annual = bench_daily_returns.groupby(bench_daily_returns.index.year).apply(
+            lambda x: (1 + x).prod() - 1
+        ) * 100
+        metrics['benchmark_annual_returns'] = bench_annual.to_dict()
+    else:
+        metrics['benchmark_annual_returns'] = None
+
+    # ── 4. 打印格式化指标到终端 ─────────────────────────────────────────
+    _print_metrics(metrics)
+
+    # ── 5. 调用 charts.generate_report() 生成 HTML ──────────────────────
+    net_worth_csv = os.path.join(output_dir, 'net_worth.csv')
+    trades_csv = os.path.join(output_dir, 'trades.csv')
+    report_path = os.path.join(output_dir, 'report.html')
+    if os.path.isfile(net_worth_csv) and os.path.isfile(trades_csv):
+        try:
+            generate_report(net_worth_csv, trades_csv, metrics, report_path)
+        except Exception as e:
+            logger.warning("生成报告失败: %s", e)
+    else:
+        logger.info("CSV 文件不存在，跳过 HTML 报告生成（仅 backtest_results 目录有 CSV 时可用）")
+
+    return metrics
+
+
+def _print_metrics(metrics: dict) -> None:
+    """打印格式化指标到终端。"""
+    sep = "=" * 50
+    print(f"\n{sep}")
+    print(f"   ETF动量轮动策略 - 回测报告")
+    print(f"{sep}\n")
+
+    # 基础信息
+    print("【基础信息】")
+    _print_line("回测区间", f"{metrics.get('start_date', '')} ~ {metrics.get('end_date', '')}")
+    _print_line("交易日数", f"{metrics.get('total_days', 0)} 天")
+    _print_line("起始资金", f"{metrics.get('initial_capital', 0):,.2f}")
+    _print_line("最终资产", f"{metrics.get('final_value', 0):,.2f}")
+    print()
+
+    # 收益
+    print("【收益】")
+    _print_line("策略累计收益率", f"{metrics.get('strategy_cumulative_return_pct', 0):+.2f}%")
+    _print_line("策略年化收益率", f"{metrics.get('strategy_annualized_return_pct', 0):+.2f}%")
+    bcr = metrics.get('benchmark_cumulative_return_pct')
+    if bcr is not None:
+        _print_line("基准累计收益率", f"{bcr:+.2f}%")
+    bar = metrics.get('benchmark_annualized_return_pct')
+    if bar is not None:
+        _print_line("基准年化收益率", f"{bar:+.2f}%")
+    er = metrics.get('excess_return_pct')
+    if er is not None:
+        _print_line("超额收益", f"{er:+.2f}%")
+    print()
+
+    # 风险
+    print("【风险】")
+    _print_line("年化波动率", f"{metrics.get('annualized_volatility', 0):.2f}%")
+    _print_line("年化下行波动率", f"{metrics.get('downside_deviation', 0):.2f}%")
+    mdd = metrics.get('max_drawdown_pct', 0)
+    _print_line("最大回撤", f"-{mdd:.2f}%" if mdd else "0.00%")
+    _print_line("最大回撤持续", f"{metrics.get('max_drawdown_duration', 0)} 天")
+    print()
+
+    # 胜率
+    print("【胜率】")
+    _print_line("日胜率", f"{metrics.get('daily_win_rate', 0):.2f}%")
+    _print_line("月胜率", f"{metrics.get('monthly_win_rate', 0):.2f}%")
+    _print_line("季度胜率", f"{metrics.get('quarterly_win_rate', 0):.2f}%")
+    _print_line("年胜率", f"{metrics.get('yearly_win_rate', 0):.2f}%")
+    print()
+
+    # 风险调整收益
+    print("【风险调整收益】")
+    _print_line("夏普比率", f"{metrics.get('sharpe_ratio', 0):.2f}")
+    _print_line("索提诺比率", f"{metrics.get('sortino_ratio', 0):.2f}")
+    _print_line("卡玛比率", f"{metrics.get('calmar_ratio', 0):.2f}")
+    print()
+
+    # 相对基准
+    alpha = metrics.get('alpha')
+    beta = metrics.get('beta')
+    if alpha is not None or beta is not None:
+        print("【相对基准】")
+        if alpha is not None:
+            _print_line("阿尔法", f"{alpha:+.2f}%")
+        if beta is not None:
+            _print_line("贝塔", f"{beta:.2f}")
+        ir = metrics.get('information_ratio')
+        if ir is not None:
+            _print_line("信息比率", f"{ir:.2f}")
+        te = metrics.get('tracking_error')
+        if te is not None:
+            _print_line("跟踪误差", f"{te:.2f}%")
+        print()
+
+    # 交易统计
+    print("【交易统计】")
+    _print_line("总交易次数", f"{metrics.get('total_trades', 0)}")
+    _print_line("平均持仓天数", f"{metrics.get('avg_holding_days', 0)} 天")
+    print()
+
+    # 年度收益率
+    strat_annual = metrics.get('strategy_annual_returns')
+    bench_annual = metrics.get('benchmark_annual_returns')
+    if strat_annual:
+        print("【年度收益率】")
+        _print_line("年份", "策略收益率    基准收益率    超额收益")
+        for year in sorted(strat_annual.keys()):
+            s_ret = strat_annual[year]
+            b_ret = bench_annual.get(year, 0.0) if bench_annual else 0.0
+            excess = s_ret - b_ret
+            line = f"{year}    {s_ret:+8.2f}%    {b_ret:+8.2f}%    {excess:+8.2f}%"
+            visual_pad = 6  # align "年份" label with first year
+            print(f"  {' ' * visual_pad}{line}")
+        print()
+
+    print(f"{sep}\n")
+
+
+def _print_line(label: str, value: str) -> None:
+    """打印一行指标。"""
+    # 中文宽度约 2 个英文字符，计算对齐
+    visual_len = sum(2 if ord(c) > 127 else 1 for c in label)
+    pad = max(2, 24 - visual_len)
+    print(f"  {label}: {' ' * pad}{value}")
+
+
+def print_next_day_suggestion(
+    calendar: list[date],
+    etf_data: dict[str, pd.DataFrame],
+    config,
+    last_holding: str | None,
+) -> None:
+    """计算下一交易日的操作建议并打印。
+
+    Parameters
+    ----------
+    calendar : list[date]
+        回测使用的交易日历。
+    etf_data : dict[str, pd.DataFrame]
+        ETF 数据（code → DataFrame with ``date``, ``close``）。
+    config : BacktestConfig
+        回测配置（用于获取 ``CHECK_RANGE`` 等参数）。
+    last_holding : str or None
+        回测结束时的持仓代码，None 表示空仓。
+    """
+    if not calendar:
+        print("⚠ 无交易日历，无法计算下一日建议。")
+        return
+
+    try:
+        next_date = get_next_trading_date(calendar[-1])
+    except ValueError:
+        print("⚠ 无法获取下一交易日（已到最后交易日）。")
+        return
+
+    # Filter data up to next_date
+    filtered: dict[str, pd.DataFrame] = {}
+    for code, df in etf_data.items():
+        sub = df[df['date'] <= next_date]
+        if not sub.empty:
+            filtered[code] = sub
+
+    if not filtered:
+        suggestion = "数据不足，无法计算信号"
+    else:
+        check_range = getattr(config, 'check_range', CHECK_RANGE)
+        max_rows = max(len(sub) for sub in filtered.values())
+        if max_rows < check_range:
+            suggestion = f"数据不足（{max_rows} 行 < {check_range}），无法计算信号"
+        else:
+            target = calculate_momentum_signal(filtered, check_range, base_date=next_date)
+            if target is not None:
+                suggestion = f"BUY {target}"
+            else:
+                suggestion = "空仓 (HOLD)"
+
+    print(f"\n{'=' * 15} 下一交易日操作建议 {'=' * 15}")
+    print(f"日期: {next_date}")
+    print(f"建议操作: {suggestion}")
+    print(f"{'=' * 52}\n")

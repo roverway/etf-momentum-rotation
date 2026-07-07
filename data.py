@@ -13,7 +13,7 @@ import os
 import akshare as ak
 import pandas as pd
 
-from config import map_to_sina_code
+from config import BENCHMARK_CODE, map_to_sina_code
 
 logger = logging.getLogger(__name__)
 
@@ -89,3 +89,50 @@ def load_all_etf_data(
         result[code] = df
 
     return result
+
+
+def fetch_benchmark_data(
+    benchmark_code: str = '000300.XSHG',
+    cache_dir: str = "data_cache/",
+) -> pd.DataFrame:
+    """获取基准指数（沪深300）日线数据并缓存。
+
+    使用 ``ak.stock_zh_index_daily(symbol='sh000300')`` 获取。
+    返回 DataFrame 包含 date, close 列。
+
+    Parameters
+    ----------
+    benchmark_code : str, optional
+        基准代码，默认 ``'000300.XSHG'``（沪深300）。
+    cache_dir : str, optional
+        缓存目录路径，默认 ``'data_cache/'``。
+
+    Returns
+    -------
+    pd.DataFrame
+        包含 date（datetime.date）, close 列的 DataFrame。
+        网络失败时返回空 DataFrame。
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{benchmark_code}.csv")
+
+    if os.path.isfile(cache_path):
+        df = pd.read_csv(cache_path)
+        df['date'] = pd.to_datetime(df['date']).dt.date
+        return df
+
+    sina_code = map_to_sina_code(benchmark_code)
+    try:
+        df = ak.stock_zh_index_daily(symbol=sina_code)
+        # 只保留 date 和 close 列
+        result = df[['date', 'close']].copy()
+        result['date'] = pd.to_datetime(result['date']).dt.date
+        # 不足 100 行的数据不缓存（避免网络异常导致缓存截断）
+        if len(result) >= 100:
+            result.to_csv(cache_path, index=False)
+        else:
+            logger.warning("⚠ 基准 %s 数据行数不足(%d)，跳过缓存", benchmark_code, len(result))
+        return result
+    except Exception as e:
+        logger.warning("⚠ 下载基准 %s 失败: %s", benchmark_code, e)
+        return pd.DataFrame()

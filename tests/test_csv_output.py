@@ -257,8 +257,9 @@ class TestRunBacktestCSVOutput:
         )
 
         with patch('backtest_engine.CHECK_RANGE', 3):
-            portfolio = run_backtest(config, etf_data=etf_data, output_dir=str(tmp_path))
+            result = run_backtest(config, etf_data=etf_data, output_dir=str(tmp_path))
 
+        portfolio = result['portfolio']
         net_worth_path = os.path.join(tmp_path, 'net_worth.csv')
         trades_path = os.path.join(tmp_path, 'trades.csv')
         assert os.path.isfile(net_worth_path), 'net_worth.csv should exist'

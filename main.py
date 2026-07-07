@@ -9,7 +9,11 @@ from config import BacktestConfig, ETF_POOL
 
 def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
     """运行回测模式"""
-    from backtest_engine import run_backtest
+    from backtest_engine import (
+        compute_and_print_metrics,
+        print_next_day_suggestion,
+        run_backtest,
+    )
     from strategy import setup_logger
 
     logger = setup_logger("trade")
@@ -22,7 +26,8 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
     )
     config.etf_codes = ETF_POOL  # duck-typing for backtest_engine.getattr
 
-    portfolio = run_backtest(config, output_dir='backtest_results/')
+    result = run_backtest(config, output_dir='backtest_results/')
+    portfolio = result['portfolio']
 
     logger.info("回测完成")
     logger.info("最终资产: %.2f", portfolio.total_value)
@@ -30,6 +35,26 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
     logger.info(
         "持仓: %s",
         {code: pos.quantity for code, pos in portfolio.positions.items()},
+    )
+
+    # 计算并打印业绩指标
+    compute_and_print_metrics(
+        result['daily_snapshots'],
+        result['trade_log'],
+        config,
+        result['calendar'],
+        'backtest_results/',
+    )
+
+    # 下一交易日操作建议
+    last_holding: str | None = (
+        next(iter(portfolio.positions)) if portfolio.positions else None
+    )
+    print_next_day_suggestion(
+        result['calendar'],
+        result['etf_data'],
+        config,
+        last_holding,
     )
 
 

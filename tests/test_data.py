@@ -1,4 +1,4 @@
-"""Tests for data.py — ETF data fetching and CSV caching.
+"""Tests for data.py — ETF data fetching, benchmark data, and CSV caching.
 
 Tests use mocked AKShare (no real network calls). Caching is tested
 via pytest's tmp_path for isolation.
@@ -9,10 +9,11 @@ import os
 from datetime import date
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from data import fetch_single_etf, load_all_etf_data
+from data import fetch_benchmark_data, fetch_single_etf, load_all_etf_data
 
 logger = logging.getLogger("data")
 
@@ -220,3 +221,79 @@ class TestLoadAllETFData:
             result = load_all_etf_data(codes, cache_dir=cache_dir)
 
         assert "存在零成交量日" not in caplog.text
+
+
+# ======================================================================
+# fetch_benchmark_data
+# ======================================================================
+
+class TestFetchBenchmarkData:
+    """fetch_benchmark_data 单元测试"""
+
+    @pytest.fixture
+    def mock_index_data(self) -> pd.DataFrame:
+        """模拟 AKShare 指数日线数据（100+行，达到缓存阈值）"""
+        dates = pd.date_range('2024-01-01', periods=120, freq='B')
+        np.random.seed(42)
+        closes = 3500.0 + np.cumsum(np.random.randn(120) * 20)
+        return pd.DataFrame({'date': dates, 'close': closes})
+
+    def test_returns_dataframe_with_expected_columns(self, mock_index_data):
+        """返回的 DataFrame 包含 date 和 close 列"""
+        with patch('data.ak.stock_zh_index_daily', return_value=mock_index_data):
+            df = fetch_benchmark_data('000300.XSHG')
+        assert isinstance(df, pd.DataFrame)
+        assert 'date' in df.columns
+        assert 'close' in df.columns
+
+    def test_correct_akshare_api_call(self, tmp_path, mock_index_data):
+        """验证调用 ak.stock_zh_index_daily 带 sh 前缀"""
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.stock_zh_index_daily') as mock_ak:
+            mock_ak.return_value = mock_index_data
+            fetch_benchmark_data('000300.XSHG', cache_dir=cache_dir)
+            mock_ak.assert_called_once_with(symbol='sh000300')
+
+    def test_custom_benchmark_code(self, tmp_path, mock_index_data):
+        """自定义基准代码应映射正确"""
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.stock_zh_index_daily') as mock_ak:
+            mock_ak.return_value = mock_index_data
+            fetch_benchmark_data('000688.XSHG', cache_dir=cache_dir)
+            mock_ak.assert_called_once_with(symbol='sh000688')
+
+    def test_default_benchmark_code(self, tmp_path, mock_index_data):
+        """默认参数应为沪深300"""
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.stock_zh_index_daily') as mock_ak:
+            mock_ak.return_value = mock_index_data
+            fetch_benchmark_data(cache_dir=cache_dir)
+            mock_ak.assert_called_once_with(symbol='sh000300')
+
+    def test_cache_and_reuse(self, tmp_path, mock_index_data):
+        """第二次调用应从缓存读取"""
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.stock_zh_index_daily', return_value=mock_index_data) as mock_ak:
+            # 第一次调用：下载并缓存
+            df1 = fetch_benchmark_data('000300.XSHG', cache_dir=cache_dir)
+            assert mock_ak.call_count == 1
+
+            # 第二次调用：读缓存，不再调 AKShare
+            df2 = fetch_benchmark_data('000300.XSHG', cache_dir=cache_dir)
+            assert mock_ak.call_count == 1
+
+        # 两个 DataFrame 应内容一致（浮点精度用 approx）
+        for a, b in zip(df1['close'], df2['close']):
+            assert a == pytest.approx(b, rel=1e-10)
+        assert df1['date'].equals(df2['date'])
+        assert os.path.isfile(os.path.join(cache_dir, '000300.XSHG.csv'))
+
+    def test_network_failure_returns_empty(self, tmp_path, caplog):
+        """网络失败返回空 DataFrame"""
+        caplog.set_level(logging.WARNING)
+        cache_dir = str(tmp_path / 'data_cache')
+        with patch('data.ak.stock_zh_index_daily', side_effect=ConnectionError("timeout")):
+            df = fetch_benchmark_data('000300.XSHG', cache_dir=cache_dir)
+        assert isinstance(df, pd.DataFrame)
+        assert df.empty
+        assert "下载基准" in caplog.text
