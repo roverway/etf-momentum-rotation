@@ -13,9 +13,9 @@ import plotly.graph_objects as go
 import pytest
 
 from charts import (
+    _build_metrics_html,
     _build_report_figure,
     _compute_drawdown,
-    _metrics_table,
     generate_all,
     generate_report,
     plot_allocation,
@@ -66,58 +66,35 @@ class TestComputeDrawdown:
 # Tests: _metrics_table
 # =====================================================================================
 
-class TestMetricsTable:
-    """_metrics_table converts a metrics dict into a go.Table."""
+class TestBuildMetricsHtml:
+    """_build_metrics_html converts a metrics dict into HTML card groups."""
 
-    def test_returns_go_table(self):
-        """Returns a plotly Table instance."""
-        result = _metrics_table({'sharpe_ratio': 1.25})
-        assert isinstance(result, go.Table)
+    def test_returns_string(self):
+        """Returns a non-empty HTML string."""
+        result = _build_metrics_html({'sharpe_ratio': 1.25})
+        assert isinstance(result, str)
+        assert len(result) > 0
 
-    def test_has_header_with_indicator_and_value(self):
-        """Header cells contain Chinese labels for indicator and value."""
-        result = _metrics_table({'sharpe_ratio': 1.25})
-        header_vals = list(result.header.values)
-        assert any('指标' in str(v) for v in header_vals)
-        assert any('值' in str(v) for v in header_vals)
+    def test_contains_metric_label_and_value(self):
+        """HTML includes Chinese label and formatted value."""
+        result = _build_metrics_html({'sharpe_ratio': 1.25})
+        assert '夏普比率' in result
+        assert '1.25' in result
 
-    def _all_names_and_vals(self, table: go.Table) -> tuple[list[str], list[str]]:
-        """Merge all 3 label columns and 3 value columns into flat lists.
-
-        The multi-column layout puts label:value pairs in columns
-        (0,1), (2,3), (4,5) respectively.
-        """
-        names: list[str] = []
-        vals: list[str] = []
-        for label_col, val_col in [(0, 1), (2, 3), (4, 5)]:
-            names.extend(table.cells.values[label_col])
-            vals.extend(table.cells.values[val_col])
-        return names, vals
-
-    def test_includes_metric_name_and_formatted_value(self):
-        """Row contains the Chinese label and formatted value."""
-        result = _metrics_table({'sharpe_ratio': 1.25})
-        names, vals = self._all_names_and_vals(result)
-        assert '夏普比率' in names
-        idx = names.index('夏普比率')
-        assert vals[idx] == '1.25'
-
-    def test_strategy_return_shows_plus_sign(self):
+    def test_positive_value_has_plus_sign(self):
         """Positive strategy return shows + sign."""
-        result = _metrics_table({'strategy_cumulative_return_pct': 15.32})
-        names, vals = self._all_names_and_vals(result)
-        idx = names.index('策略累计收益率')
-        assert vals[idx] == '+15.32%'
+        result = _build_metrics_html({'strategy_cumulative_return_pct': 15.32})
+        assert '+15.32%' in result
+        assert 'positive' in result
 
     def test_max_drawdown_shows_negative(self):
         """Max drawdown is displayed as negative."""
-        result = _metrics_table({'max_drawdown_pct': 12.34})
-        names, vals = self._all_names_and_vals(result)
-        idx = names.index('最大回撤')
-        assert vals[idx] == '-12.34%'
+        result = _build_metrics_html({'max_drawdown_pct': 12.34})
+        assert '-12.34%' in result
+        assert 'negative' in result
 
     def test_multiple_metrics_all_included(self):
-        """All metrics are present in the table."""
+        """All available metrics are present in the HTML."""
         metrics = {
             'start_date': '2019-01-18',
             'end_date': '2024-12-31',
@@ -129,21 +106,19 @@ class TestMetricsTable:
             'daily_win_rate': 55.21,
             'total_trades': 45,
         }
-        result = _metrics_table(metrics)
-        names, vals = self._all_names_and_vals(result)
-        assert '开始日期' in names
-        assert '夏普比率' in names
-        assert '最大回撤' in names
-        assert '策略累计收益率' in names
-        assert '基准累计收益率' in names
-        assert '日胜率(超基准)' in names  # full label from _METRIC_DEFS
-        assert '总交易次数' in names
+        result = _build_metrics_html(metrics)
+        assert '开始日期' in result
+        assert '夏普比率' in result
+        assert '最大回撤' in result
+        assert '策略累计收益率' in result
+        assert '基准累计收益率' in result
+        assert '日胜率' in result
+        assert '总交易次数' in result
 
-    def test_empty_metrics_returns_empty_table(self):
-        """Empty dict results in a table with no data rows."""
-        result = _metrics_table({})
-        assert len(result.cells.values[0]) == 0
-        assert len(result.cells.values[1]) == 0
+    def test_empty_metrics_returns_empty_string(self):
+        """Empty dict results in empty string."""
+        result = _build_metrics_html({})
+        assert result == ''
 
 
 # =====================================================================================
@@ -188,10 +163,10 @@ class TestBuildReportFigure:
         result = _build_report_figure(mock_nw, mock_trades, sample_metrics)
         assert isinstance(result, go.Figure)
 
-    def test_has_at_least_four_traces(self, mock_nw, mock_trades, sample_metrics):
-        """Figure has at least 4 traces (table + net_worth + drawdown + allocation)."""
+    def test_has_at_least_three_traces(self, mock_nw, mock_trades, sample_metrics):
+        """Figure has at least 3 traces (net_worth + drawdown + allocation)."""
         result = _build_report_figure(mock_nw, mock_trades, sample_metrics)
-        assert len(result.data) >= 4
+        assert len(result.data) >= 3
 
     def test_has_title(self, mock_nw, mock_trades, sample_metrics):
         """Figure title contains report name."""
@@ -216,7 +191,7 @@ class TestBuildReportFigure:
         })
         trades = pd.DataFrame(columns=['date', 'action', 'code', 'shares', 'price', 'value'])
         result = _build_report_figure(nw, trades, sample_metrics)
-        assert len(result.data) >= 4
+        assert len(result.data) >= 3
 
 
 # =====================================================================================
@@ -436,16 +411,16 @@ class TestGenerateReport:
         assert content.lstrip().startswith('<!DOCTYPE html>')
 
     def test_contains_metrics_text(self, mock_nw_csv, mock_trades_csv, sample_metrics, tmp_path):
-        """HTML contains metric values rendered from the table (ASCII-safe check)."""
+        """HTML contains metric values rendered as HTML cards."""
         output = os.path.join(str(tmp_path), 'report.html')
         generate_report(mock_nw_csv, mock_trades_csv, sample_metrics, output)
         with open(output) as f:
             content = f.read()
-        # Plotly JSON-escapes non-ASCII, but formatted values like +15.32% are ASCII
+        # Metrics are rendered as actual HTML (not plotly-escaped), so Chinese chars are literal
         assert '+15.32%' in content
         assert '1.25' in content
-        # Unicode-escaped metric names (策略累计收益率 -> \\u7b56\\u7565...)
-        assert '\\u7b56\\u7565\\u7d2f\\u8ba1\\u6536\\u76ca\\u7387' in content
+        assert '策略累计收益率' in content
+        assert 'metrics-container' in content
 
     def test_contains_report_title(self, mock_nw_csv, mock_trades_csv, sample_metrics, tmp_path):
         """HTML contains the report title (ASCII portion)."""

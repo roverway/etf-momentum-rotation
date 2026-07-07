@@ -502,7 +502,7 @@ def compute_and_print_metrics(
     report_path = os.path.join(output_dir, 'report.html')
     if os.path.isfile(net_worth_csv) and os.path.isfile(trades_csv):
         try:
-            generate_report(net_worth_csv, trades_csv, metrics, report_path)
+            generate_report(net_worth_csv, trades_csv, metrics, report_path, benchmark_series=benchmark_series)
         except Exception as e:
             logger.warning("生成报告失败: %s", e)
     else:

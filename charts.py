@@ -66,7 +66,7 @@ _METRIC_DEFS: list[tuple[str, str, str]] = [
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_TEMPLATE = 'plotly_dark'
+_TEMPLATE = 'plotly_white'
 
 
 def _compute_drawdown(portfolio_values: pd.Series) -> pd.Series:
@@ -110,22 +110,36 @@ def _apply_theme(fig: go.Figure, **kwargs: Any) -> go.Figure:
     return fig
 
 
-def _write_html(fig: go.Figure, path: str) -> None:
-    """写入 HTML，确保以 ``<!DOCTYPE html>`` 开头。"""
-    html = fig.to_html(full_html=True, include_plotlyjs='cdn')
-    if not html.lstrip().startswith('<!DOCTYPE html>'):
-        html = '<!DOCTYPE html>\n' + html
+def _write_html(fig: go.Figure, path: str, metrics_html: str = "") -> None:
+    """写入包含指标卡片和 Plotly 图表的完整 HTML 报告。"""
+    plotly_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ETF动量轮动策略 - 回测报告</title>
+<style>
+body {{ margin:0; padding:0; background:#f5f7fa; font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }}
+{_METRICS_CSS}
+</style>
+</head>
+<body>
+{metrics_html}
+{plotly_html}
+</body>
+</html>"""
     with open(path, 'w', encoding='utf-8') as f:
         f.write(html)
 
 
 # ---------------------------------------------------------------------------
-# Metrics Table
+# Metrics HTML cards
 # ---------------------------------------------------------------------------
 
-# ── Category groupings for multi-column table layout ──
-# Each tuple: (display_name, [metric_key, ...])
-_CATEGORIES: list[tuple[str, list[str]]] = [
+# 类别分组定义: (类别名, [metric_key, ...])
+_METRIC_CATEGORIES: list[tuple[str, list[str]]] = [
     ('基础信息', ['start_date', 'end_date', 'total_days', 'trading_years']),
     ('收益', [
         'strategy_cumulative_return_pct', 'strategy_annualized_return_pct',
@@ -146,20 +160,67 @@ _CATEGORIES: list[tuple[str, list[str]]] = [
     ('交易统计', ['total_trades', 'avg_holding_days']),
 ]
 
-# Column groups: arrange categories into 3 side-by-side blocks (6 cols total)
-_COLUMN_GROUPS: list[list[tuple[str, list[str]]]] = [
-    [_CATEGORIES[0], _CATEGORIES[1]],   # 基础信息 + 收益
-    [_CATEGORIES[2], _CATEGORIES[3]],   # 风险 + 胜率
-    [_CATEGORIES[4], _CATEGORIES[5], _CATEGORIES[6]],  # 风险调整收益 + 相对基准 + 交易统计
-]
+_METRICS_CSS = """
+.metrics-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 24px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.metric-group {
+  background: #ffffff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 12px 16px 16px;
+  flex: 1 1 200px;
+  min-width: 180px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.group-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #409eff;
+}
+.metric-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.metric-table tr {
+  border-bottom: 1px solid #f0f0f0;
+}
+.metric-table tr:last-child {
+  border-bottom: none;
+}
+.metric-table td {
+  padding: 4px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.metric-table td.label {
+  color: #606266;
+}
+.metric-table td.value {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #303133;
+}
+.metric-table td.value.positive {
+  color: #67c23a;
+}
+.metric-table td.value.negative {
+  color: #f56c6c;
+}
+"""
 
 
-def _metrics_table(metrics: dict) -> go.Table:
-    """构建多列分组业绩指标表格。
-
-    将指标按类别分组为3列并排显示，每列由 (label, value) 对组成，
-    类别名称作为行内标题。
-    布局: 6 列 → (指标|值) × 3 组。
+def _build_metrics_html(metrics: dict) -> str:
+    """构建业绩指标卡片 HTML（仅 body 内容，不含 CSS）。
 
     Parameters
     ----------
@@ -168,8 +229,8 @@ def _metrics_table(metrics: dict) -> go.Table:
 
     Returns
     -------
-    go.Table
-        Plotly Table 对象，适合放入 subplot 的第一行。
+    str
+        指标卡片组的 HTML 字符串（<div class="metrics-container">...</div>）。
     """
     # ── 1. 构建 key -> (label, formatted_value) 查找表 ──
     metric_map: dict[str, tuple[str, str]] = {}
@@ -182,73 +243,38 @@ def _metrics_table(metrics: dict) -> go.Table:
                 formatted = str(val)
             metric_map[key] = (label, formatted)
 
-    # ── 2. 为每组构建行条目 ──
-    # 每条: ('header', cat_name) 或 ('metric', label, value) 或 ('empty',)
-    group_rows: list[list[tuple]] = [[], [], []]
-    for g_idx, group in enumerate(_COLUMN_GROUPS):
-        for cat_name, cat_keys in group:
-            available = [metric_map[k] for k in cat_keys if k in metric_map]
-            if not available:
-                continue
-            group_rows[g_idx].append(('header', cat_name))
-            for label, value in available:
-                group_rows[g_idx].append(('metric', label, value))
+    # ── 2. 构建每个类别的 HTML ──
+    parts: list[str] = []
+    for cat_name, cat_keys in _METRIC_CATEGORIES:
+        rows: list[str] = []
+        for k in cat_keys:
+            if k in metric_map:
+                label, value = metric_map[k]
+                val_class = ''
+                if value.startswith('+'):
+                    val_class = ' positive'
+                elif value.startswith('-'):
+                    val_class = ' negative'
+                rows.append(
+                    f'          <tr>'
+                    f'<td class="label">{label}</td>'
+                    f'<td class="value{val_class}">{value}</td>'
+                    f'</tr>'
+                )
+        if rows:
+            parts.append('        <div class="metric-group">')
+            parts.append(f'          <h3 class="group-title">{cat_name}</h3>')
+            parts.append('          <table class="metric-table">')
+            parts.extend(rows)
+            parts.append('          </table>')
+            parts.append('        </div>')
 
-    max_rows = max(len(r) for r in group_rows) if any(group_rows) else 0
-    for rows in group_rows:
-        while len(rows) < max_rows:
-            rows.append(('empty',))
+    if not parts:
+        return ''
 
-    # ── 3. 构建 per-column cell arrays ──
-    col_values: list[list[str]] = [[], [], [], [], [], []]
-    col_fills: list[list[str]] = [[], [], [], [], [], []]
-    row_norm = 0  # normalized row counter for alternating shading
-
-    for row_i in range(max_rows):
-        any_metric = any(g[row_i][0] == 'metric' for g in group_rows if row_i < len(g))
-        if any_metric:
-            row_norm += 1
-
-        for g_idx in range(3):
-            c_label = g_idx * 2
-            c_value = g_idx * 2 + 1
-            entry = group_rows[g_idx][row_i]
-
-            if entry[0] == 'header':
-                col_values[c_label].append(f'<b>{entry[1]}</b>')
-                col_values[c_value].append('')
-                col_fills[c_label].append('#e8edf3')  # subtle blue-gray header
-                col_fills[c_value].append('#e8edf3')
-            elif entry[0] == 'metric':
-                col_values[c_label].append(entry[1])
-                col_values[c_value].append(entry[2])
-                bg = '#fafafa' if (row_norm % 2 == 0) else '#ffffff'
-                col_fills[c_label].append(bg)
-                col_fills[c_value].append(bg)
-            else:  # empty
-                col_values[c_label].append('')
-                col_values[c_value].append('')
-                col_fills[c_label].append('#ffffff')
-                col_fills[c_value].append('#ffffff')
-
-    return go.Table(
-        header=dict(
-            values=['<b>指标</b>', '<b>值</b>'] * 3,
-            font=dict(size=12, color='#333333'),
-            fill_color='#f0f0f0',
-            align='left',
-            height=28,
-        ),
-        cells=dict(
-            values=col_values,
-            font=dict(size=11, color=['#333333', '#006600'] * 3),
-            fill_color=col_fills,
-            align='left',
-            height=22,
-            line=dict(color='#e0e0e0', width=1),
-        ),
-        columnwidth=[125, 90] * 3,
-    )
+    parts.insert(0, '      <div class="metrics-container">')
+    parts.append('      </div>')
+    return '\n'.join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -259,12 +285,11 @@ def _build_report_figure(
     net_worth_df: pd.DataFrame,
     trades_df: pd.DataFrame,
     metrics: dict,
+    benchmark_series: pd.Series | None = None,
 ) -> go.Figure:
-    """构建组合页面 Figure。
+    """构建组合页面 Figure — 3 行子图（净值 + 回撤 + 持仓）。
 
-    使用 make_subplots:
-    - rows=4, cols=1 (指标表格 + 净值 + 回撤 + 持仓)
-    - row_heights=[0.15, 0.35, 0.25, 0.25]
+    业绩指标改用 HTML 卡片（由 _build_metrics_html 生成），不再内嵌为 subplot。
 
     Parameters
     ----------
@@ -275,63 +300,56 @@ def _build_report_figure(
         交易记录 DataFrame（暂仅占位，持仓数据从 net_worth_df 提取）。
     metrics : dict
         业绩指标字典。
+    benchmark_series : pd.Series | None
+        基准指数净值序列（DatetimeIndex），可选。
 
     Returns
     -------
     go.Figure
-        包含全部子图的组合 Figure。
+        包含 3 行子图的组合 Figure。
     """
-    # ── 1. 准备数据 ──────────────────────────────────────────────────────
     df = _prepare_df(net_worth_df)
 
-    # ── 2. 创建 subplot 布局 ─────────────────────────────────────────────
+    # ── subplot 布局: 3 rows ──
     fig = make_subplots(
-        rows=4,
+        rows=3,
         cols=1,
-        row_heights=[0.18, 0.34, 0.24, 0.24],
-        subplot_titles=('', '', '', ''),
-        vertical_spacing=0.07,
+        row_heights=[0.38, 0.28, 0.28],
+        subplot_titles=('净值曲线', '回撤曲线', '持仓比例'),
+        vertical_spacing=0.08,
         specs=[
-            [{'type': 'domain'}],
             [{'type': 'scatter'}],
             [{'type': 'scatter'}],
             [{'type': 'scatter'}],
         ],
     )
 
-    # ── 3. Row 1: 业绩指标表格 ────────────────────────────────────────────
-    table = _metrics_table(metrics)
-    fig.add_trace(table, row=1, col=1)
-
-    # ── 4. Row 2: 净值曲线 ────────────────────────────────────────────────
-    # 策略净值
+    # ── Row 1: 净值曲线 ──
     fig.add_trace(
         go.Scatter(
             x=df['date'],
             y=df['portfolio_value'],
             mode='lines',
             name='策略净值',
-            line=dict(color='rgb(0, 200, 100)', width=2),
+            line=dict(color='#2ecc71', width=2),
         ),
-        row=2,
-        col=1,
+        row=1, col=1,
     )
 
-    # 基准曲线（如果有 benchmark_value 列）
-    if 'benchmark_value' in df.columns:
+    # 基准曲线（作为独立参数传入）
+    if benchmark_series is not None and not benchmark_series.empty:
         fig.add_trace(
             go.Scatter(
-                x=df['date'],
-                y=df['benchmark_value'],
+                x=benchmark_series.index,
+                y=benchmark_series.values,
                 mode='lines',
-                name='基准',
-                line=dict(color='rgb(255, 180, 50)', width=1.5, dash='dash'),
+                name='沪深300',
+                line=dict(color='#FF8C00', width=1.5, dash='dash'),
             ),
-            row=2,
-            col=1,
+            row=1, col=1,
         )
 
-    # ── 5. Row 3: 回撤曲线 ────────────────────────────────────────────────
+    # ── Row 2: 回撤曲线 ──
     drawdown = _compute_drawdown(df['portfolio_value'])
     fig.add_trace(
         go.Scatter(
@@ -340,23 +358,17 @@ def _build_report_figure(
             fill='tozeroy',
             mode='lines',
             name='回撤',
-            line=dict(color='rgb(255, 80, 80)', width=1.5),
+            line=dict(color='#e74c3c', width=1.5),
         ),
-        row=3,
-        col=1,
+        row=2, col=1,
     )
 
-    # ── 6. Row 4: 持仓比例堆叠图 ──────────────────────────────────────────
+    # ── Row 3: 持仓比例堆叠图 ──
     total = df['portfolio_value'].values
     cash_pct = df['cash'].values / total * 100
-
-    # 所有出现过的持仓代码（填充 NaN → 空字符串，避免排序时 str vs float 错误）
     pos_codes = df['position_code'].fillna('')
-    codes = sorted(
-        pos_codes.loc[pos_codes != ''].unique().tolist()
-    )
+    codes = sorted(pos_codes.loc[pos_codes != ''].unique().tolist())
 
-    # Cash 层
     fig.add_trace(
         go.Scatter(
             x=df['date'],
@@ -366,17 +378,14 @@ def _build_report_figure(
             name='Cash',
             fillcolor='rgba(100, 149, 237, 0.6)',
         ),
-        row=4,
-        col=1,
+        row=3, col=1,
     )
 
-    # 每个代码一层
     for code in codes:
         mask = (df['position_code'] == code).values
         pos_val = df['shares'].values * df['price'].values
         alloc = pd.Series(data=pos_val / total * 100, index=df.index)
         alloc[~mask] = 0.0
-
         fig.add_trace(
             go.Scatter(
                 x=df['date'],
@@ -385,58 +394,60 @@ def _build_report_figure(
                 stackgroup='one',
                 name=code,
             ),
-            row=4,
-            col=1,
+            row=3, col=1,
         )
 
-    # ── 7. 布局 ────────────────────────────────────────────────────────────
-    _apply_theme(
-        fig,
+    # ── 全局布局 ──
+    fig.update_layout(
+        template='plotly_white',
         title=dict(
             text='ETF动量轮动策略 - 回测报告',
             x=0.5,
             xanchor='center',
             font=dict(size=20),
         ),
-        height=1400,
-        # 移除表格的轴线（Row 1 是 domain 类型，不需要轴）
-        xaxis1=dict(visible=False),
-        yaxis1=dict(visible=False),
-        # 净值
-        xaxis2=dict(title='日期'),
-        yaxis2=dict(title='组合净值 (CNY)'),
-        # 回撤
-        xaxis3=dict(title='日期'),
-        yaxis3=dict(title='回撤 (%)', ticksuffix='%'),
-        # 持仓
-        xaxis4=dict(title='日期'),
-        yaxis4=dict(title='持仓比例 (%)', ticksuffix='%', range=[0, 105]),
-        # 图例（位置）
+        height=1200,
+        hovermode='x unified',
+        font=dict(family='Arial, sans-serif', size=12),
         legend=dict(
             orientation='h',
-            y=1.02,
+            y=1.0,
             x=0.5,
             xanchor='center',
             yanchor='bottom',
+            font=dict(size=10),
         ),
-        margin=dict(l=80, r=40, t=120, b=60),
+        margin=dict(l=80, r=40, t=140, b=60),
     )
 
-    # 添加子图标题（用 annotation 替代 subplot_titles 以精细控制位置）
-    subtitle_y = [0.94, 0.72, 0.46, 0.22]
-    subtitle_text = ['业绩指标', '净值曲线', '回撤曲线', '持仓比例']
-    for i, (sy, st) in enumerate(zip(subtitle_y, subtitle_text), start=1):
-        fig.add_annotation(
-            x=0.5,
-            y=sy,
-            xref='paper',
-            yref='paper',
-            text=f'<b>{st}</b>',
-            showarrow=False,
-            font=dict(size=14),
-            xanchor='center',
-            yanchor='bottom',
-        )
+    # ── 轴属性 ──
+    fig.update_xaxes(title='日期', row=1, col=1)
+    fig.update_yaxes(title='组合净值 (CNY)', row=1, col=1)
+
+    fig.update_xaxes(title='日期', row=2, col=1)
+    fig.update_yaxes(title='回撤 (%)', ticksuffix='%', row=2, col=1)
+
+    fig.update_xaxes(title='日期', row=3, col=1)
+    fig.update_yaxes(title='持仓比例 (%)', ticksuffix='%', range=[0, 105], row=3, col=1)
+
+    # ── 区间选择器 (所有 x 轴) ──
+    selector_buttons = [
+        dict(count=1, label='1m', step='month', stepmode='backward'),
+        dict(count=6, label='6m', step='month', stepmode='backward'),
+        dict(count=1, label='1y', step='year', stepmode='backward'),
+        dict(count=3, label='3y', step='year', stepmode='backward'),
+        dict(step='all', label='全部'),
+    ]
+    selector_style = dict(bgcolor='#f0f0f0', activecolor='#c8d8e8')
+    for r in (1, 2, 3):
+        fig.update_xaxes(rangeselector=dict(buttons=selector_buttons, **selector_style), row=r, col=1)
+
+    # ── 净值图 rangeslider ──
+    fig.update_xaxes(rangeslider=dict(visible=True), row=1, col=1)
+
+    # ── 同步 x 轴缩放 ──
+    fig.update_xaxes(matches='x', row=2, col=1)
+    fig.update_xaxes(matches='x', row=3, col=1)
 
     return fig
 
@@ -610,15 +621,15 @@ def generate_report(
     trades_csv: str,
     metrics: dict,
     output_path: str,
+    benchmark_series: pd.Series | None = None,
 ) -> str:
     """生成完整业绩报告 HTML（单文件）。
 
     页面结构:
-    1. 标题: "ETF动量轮动策略 - 回测报告"
-    2. 业绩指标表格 (plotly table)
-    3. 净值曲线 (subplot 2)
-    4. 回撤曲线 (subplot 3)
-    5. 持仓比例堆叠图 (subplot 4)
+    1. 业绩指标卡片组（HTML，按类别分组）
+    2. 净值曲线（含策略净值 + 可选基准指数）
+    3. 回撤曲线
+    4. 持仓比例堆叠图
 
     Parameters
     ----------
@@ -630,6 +641,8 @@ def generate_report(
         业绩指标字典（由 ``metrics.compute_all_metrics()`` 返回）。
     output_path : str
         输出 HTML 文件路径。
+    benchmark_series : pd.Series | None
+        基准指数净值序列（DatetimeIndex），可选。
 
     Returns
     -------
@@ -639,11 +652,12 @@ def generate_report(
     net_worth_df = pd.read_csv(net_worth_csv)
     trades_df = pd.read_csv(trades_csv)
 
-    # 确保 parse_dates 在读取层面就被处理，保留所有行
-    # （不传 parse_dates，由 _prepare_df 统一处理）
-
-    fig = _build_report_figure(net_worth_df, trades_df, metrics)
-    _write_html(fig, output_path)
+    metrics_html = _build_metrics_html(metrics)
+    fig = _build_report_figure(
+        net_worth_df, trades_df, metrics,
+        benchmark_series=benchmark_series,
+    )
+    _write_html(fig, output_path, metrics_html=metrics_html)
     return output_path
 
 
