@@ -48,6 +48,12 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
         last_holding,
     )
 
+    if portfolio.positions:
+        holdings_parts = [f"{code}: {pos.quantity}股" for code, pos in portfolio.positions.items()]
+        holdings_str = " ".join(holdings_parts)
+    else:
+        holdings_str = "空仓"
+
     # 计算并打印业绩指标（含下一交易日建议数据）
     compute_and_print_metrics(
         result['daily_snapshots'],
@@ -57,6 +63,7 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
         'backtest_results/',
         next_day_date=str(next_date) if next_date else None,
         next_day_suggestion=suggestion,
+        current_holdings=holdings_str,
     )
 
 

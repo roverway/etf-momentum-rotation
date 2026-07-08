@@ -391,6 +391,7 @@ def compute_and_print_metrics(
     output_dir: str,
     next_day_date: str | None = None,
     next_day_suggestion: str | None = None,
+    current_holdings: str = "",
 ) -> dict:
     """计算全套业绩指标、打印到终端、生成 HTML 报告。
 
@@ -410,6 +411,8 @@ def compute_and_print_metrics(
         下一交易日日期字符串（可选）。
     next_day_suggestion : str | None
         下一交易日操作建议文本（可选）。
+    current_holdings : str
+        当前持仓字符串（可选），如 "513100.XSHG: 50000股"。
 
     Returns
     -------
@@ -461,6 +464,8 @@ def compute_and_print_metrics(
     metrics['total_days'] = len(calendar)
     metrics['initial_capital'] = config.initial_cash
     metrics['final_value'] = portfolio_series.iloc[-1] if len(portfolio_series) > 0 else 0
+    metrics['commission_rate'] = config.commission_rate
+    metrics['slippage_rate'] = config.slippage_rate
 
     # Trade stats from trade_log
     metrics['total_trades'] = len(trade_log)
@@ -513,6 +518,7 @@ def compute_and_print_metrics(
                 benchmark_series=benchmark_series,
                 next_day_date=next_day_date,
                 next_day_suggestion=next_day_suggestion,
+                current_holdings=current_holdings,
             )
         except Exception as e:
             logger.warning("生成报告失败: %s", e)

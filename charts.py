@@ -27,6 +27,10 @@ _METRIC_DEFS: list[tuple[str, str, str]] = [
     ('end_date', '结束日期', '{}'),
     ('total_days', '回测天数', '{}天'),
     ('trading_years', '交易年限', '{:.2f}年'),
+    ('initial_capital', '初始资产', '{:,.0f}'),
+    ('final_value', '最终资产', '{:,.0f}'),
+    ('commission_rate', '交易手续费', '{:.4%}'),
+    ('slippage_rate', '滑点', '{:.4%}'),
     # ── 收益类 ──
     ('strategy_cumulative_return_pct', '策略累计收益率', '{:+.2f}%'),
     ('strategy_annualized_return_pct', '策略年化收益率', '{:+.2f}%'),
@@ -110,7 +114,7 @@ def _apply_theme(fig: go.Figure, **kwargs: Any) -> go.Figure:
     return fig
 
 
-def _write_html(fig: go.Figure, path: str, metrics_html: str = "", extra_html: str = "") -> None:
+def _write_html(fig: go.Figure, path: str, metrics_html: str = "", extra_html: str = "", top_html: str = "") -> None:
     """写入包含指标卡片、年度表格、操作建议和 Plotly 图表的完整 HTML 报告。"""
     plotly_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
 
@@ -126,6 +130,7 @@ body {{ margin:0; padding:0; background:#f5f7fa; font-family: 'Segoe UI', 'PingF
 </style>
 </head>
 <body>
+{top_html}
 {metrics_html}
 {extra_html}
 {plotly_html}
@@ -141,7 +146,8 @@ body {{ margin:0; padding:0; background:#f5f7fa; font-family: 'Segoe UI', 'PingF
 
 # 类别分组定义: (类别名, [metric_key, ...])
 _METRIC_CATEGORIES: list[tuple[str, list[str]]] = [
-    ('基础信息', ['start_date', 'end_date', 'total_days', 'trading_years']),
+    ('基础信息', ['start_date', 'end_date', 'total_days', 'trading_years',
+                  'initial_capital', 'final_value', 'commission_rate', 'slippage_rate']),
     ('收益', [
         'strategy_cumulative_return_pct', 'strategy_annualized_return_pct',
         'benchmark_cumulative_return_pct', 'benchmark_annualized_return_pct',
@@ -237,6 +243,7 @@ _METRICS_CSS = """
 }
 .annual-table td { padding: 5px 8px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
 .annual-table td.year { color: #606266; font-weight: 500; }
+.annual-table td.value { text-align: right; font-variant-numeric: tabular-nums; }
 .next-day-section {
   max-width: 1200px; margin: 0 auto 20px; padding: 0 24px;
 }
@@ -245,6 +252,7 @@ _METRICS_CSS = """
 .next-day-label { font-size: 13px; color: #909399; }
 .next-day-date { font-size: 14px; font-weight: 600; color: #303133; margin-right: 20px; }
 .next-day-suggestion { font-size: 16px; font-weight: 700; color: #409eff; }
+.next-day-holdings { font-size: 14px; font-weight: 600; color: #303133; }
 """
 
 
@@ -683,10 +691,12 @@ def _build_annual_returns_html(metrics: dict) -> str:
     </div>'''
 
 
-def _build_next_day_html(date_str: str | None, suggestion: str | None) -> str:
+def _build_next_day_html(date_str: str | None, suggestion: str | None, current_holdings: str = "") -> str:
     """构建下一交易日操作建议卡片 HTML。"""
     if not date_str or not suggestion:
         return ''
+    holdings_line = (f'<span class="next-day-label">当前持仓:</span>'
+                     f'<span class="next-day-holdings">{current_holdings}</span>') if current_holdings else ''
     return f'''    <div class="next-day-section">
       <div class="section-card next-day-card">
         <h3 class="section-title">下一交易日操作建议</h3>
@@ -695,6 +705,7 @@ def _build_next_day_html(date_str: str | None, suggestion: str | None) -> str:
           <span class="next-day-date">{date_str}</span>
           <span class="next-day-label">建议操作:</span>
           <span class="next-day-suggestion">{suggestion}</span>
+          {holdings_line}
         </div>
       </div>
     </div>'''
@@ -712,13 +723,14 @@ def generate_report(
     benchmark_series: pd.Series | None = None,
     next_day_date: str | None = None,
     next_day_suggestion: str | None = None,
+    current_holdings: str = "",
 ) -> str:
     """生成完整业绩报告 HTML（单文件）。
 
     页面结构:
-    1. 业绩指标卡片组（HTML，按类别分组）
-    2. 年度收益率表格
-    3. 下一交易日操作建议卡片
+    1. 下一交易日操作建议卡片（含当前持仓）
+    2. 业绩指标卡片组（HTML，按类别分组）
+    3. 年度收益率表格
     4. 净值曲线（含策略净值 + 可选基准指数）
     5. 回撤曲线
     6. 持仓比例堆叠图
@@ -739,6 +751,8 @@ def generate_report(
         下一交易日日期字符串（可选）。
     next_day_suggestion : str | None
         下一交易日操作建议文本（可选）。
+    current_holdings : str
+        当前持仓字符串（可选），如 "513100.XSHG: 50000股"。
 
     Returns
     -------
@@ -748,15 +762,15 @@ def generate_report(
     net_worth_df = pd.read_csv(net_worth_csv)
     trades_df = pd.read_csv(trades_csv)
 
+    next_html = _build_next_day_html(next_day_date, next_day_suggestion, current_holdings)
     metrics_html = _build_metrics_html(metrics)
     annual_html = _build_annual_returns_html(metrics)
-    next_html = _build_next_day_html(next_day_date, next_day_suggestion)
-    extra_html = annual_html + next_html
+    extra_html = annual_html
     fig = _build_report_figure(
         net_worth_df, trades_df, metrics,
         benchmark_series=benchmark_series,
     )
-    _write_html(fig, output_path, metrics_html=metrics_html, extra_html=extra_html)
+    _write_html(fig, output_path, top_html=next_html, metrics_html=metrics_html, extra_html=extra_html)
     return output_path
 
 
