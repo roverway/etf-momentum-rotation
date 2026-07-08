@@ -26,8 +26,8 @@ class BacktestConfig:
     start_date: str = "2014-01-01"
     end_date: str = ""  # 空字符串 ≡ 今天
     initial_cash: float = 1_000_000
-    commission_rate: float = 0.0008  # 万8
-    slippage_rate: float = 0.0  # 无滑点
+    commission_rate: float = 0.0002  # 万2
+    slippage_rate: float = 0.001  # 千分之一
     cash_return_rate: float = 0.0  # 现金收益率（年化）
     benchmark_code: str = "000300.XSHG"  # 基准代码，沪深300
 
