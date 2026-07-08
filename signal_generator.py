@@ -50,8 +50,8 @@ def generate_signal(
     """生成实盘信号。
 
     流程:
-      1. 加载交易日历 → 取最后交易日；
-      2. 加载最近 ``check_range * 2`` 天的数据（确保有足够历史）；
+      1. 加载 ETF 数据 → 从实际收盘价确定信号日期；
+      2. 根据信号日期计算数据起始日，筛选足够历史；
       3. 调用 ``calculate_momentum_signal()`` 确定目标 ETF；
       4. 打印格式化输出。
 
@@ -76,14 +76,29 @@ def generate_signal(
     if etf_codes is None:
         etf_codes = ETF_POOL
 
-    # ── 1. 加载交易日历 → 取最后交易日 ────────────────────────────────────
-    calendar = load_trading_calendar()
-    signal_date = calendar[-1]
+    # ── 1. 加载 ETF 数据 → 从实际收盘价确定信号日期 ────────────────────
+    all_data = load_all_etf_data(etf_codes)
+
+    # 从各 ETF 最近有收盘价数据的日期中取最大值
+    latest_dates: list[date] = []
+    for code, df in all_data.items():
+        valid = df[df['close'].notna()]
+        if not valid.empty:
+            latest_dates.append(valid['date'].max())
+    if not latest_dates:
+        print("⚠ 无可用 ETF 数据")
+        return {
+            'signal_date': None,
+            'lookback_start': None,
+            'lookback_end': None,
+            'returns': {},
+            'target': None,
+        }
+    signal_date = max(latest_dates)
 
     # ── 2. 加载足够的历史数据 ─────────────────────────────────────────────
     # 加载 check_range * 2 天的数据，确保 even after alignment 仍有足够行数
     data_start = get_previous_trading_date(signal_date, n=check_range * 2)
-    all_data = load_all_etf_data(etf_codes)
 
     filtered: dict[str, pd.DataFrame] = {}
     for code, df in all_data.items():
