@@ -443,10 +443,7 @@ def _build_report_figure(
     for r in (1, 2, 3):
         fig.update_xaxes(rangeselector=dict(buttons=selector_buttons, **selector_style), row=r, col=1)
 
-    # ── 净值图 rangeslider ──
-    fig.update_xaxes(rangeslider=dict(visible=True), row=1, col=1)
-
-    # ── 同步 x 轴缩放 ──
+    # ── 同步 x 轴缩放（不启用 rangeslider，因其微缩图会与回撤子图重叠）──
     fig.update_xaxes(matches='x', row=2, col=1)
     fig.update_xaxes(matches='x', row=3, col=1)
 
