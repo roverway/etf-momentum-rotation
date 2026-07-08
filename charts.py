@@ -163,8 +163,8 @@ _METRIC_CATEGORIES: list[tuple[str, list[str]]] = [
 _METRICS_CSS = """
 .metrics-container {
   max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px 24px 0;
+  margin: 0 auto 30px;
+  padding: 20px 24px 10px;
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -314,9 +314,9 @@ def _build_report_figure(
     fig = make_subplots(
         rows=3,
         cols=1,
-        row_heights=[0.38, 0.28, 0.28],
+        row_heights=[0.38, 0.30, 0.26],
         subplot_titles=('净值曲线', '回撤曲线', '持仓比例'),
-        vertical_spacing=0.08,
+        vertical_spacing=0.10,
         specs=[
             [{'type': 'scatter'}],
             [{'type': 'scatter'}],
@@ -351,6 +351,7 @@ def _build_report_figure(
 
     # ── Row 2: 回撤曲线 ──
     drawdown = _compute_drawdown(df['portfolio_value'])
+    min_dd = drawdown.min()
     fig.add_trace(
         go.Scatter(
             x=df['date'],
@@ -425,7 +426,7 @@ def _build_report_figure(
     fig.update_yaxes(title='组合净值 (CNY)', row=1, col=1)
 
     fig.update_xaxes(title='日期', row=2, col=1)
-    fig.update_yaxes(title='回撤 (%)', ticksuffix='%', row=2, col=1)
+    fig.update_yaxes(title='回撤 (%)', ticksuffix='%', range=[min_dd - 3, 3], row=2, col=1)
 
     fig.update_xaxes(title='日期', row=3, col=1)
     fig.update_yaxes(title='持仓比例 (%)', ticksuffix='%', range=[0, 105], row=3, col=1)
