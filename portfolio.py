@@ -98,7 +98,7 @@ class Portfolio:
         commission = round(cost * commission_rate, 2)
         total_cost = cost + commission
 
-        if total_cost > self.cash:
+        if total_cost > self.cash + 1e-4:
             raise ValueError(
                 f"Insufficient cash: need {total_cost:.2f}, have {self.cash:.2f}"
             )
