@@ -110,8 +110,8 @@ def _apply_theme(fig: go.Figure, **kwargs: Any) -> go.Figure:
     return fig
 
 
-def _write_html(fig: go.Figure, path: str, metrics_html: str = "") -> None:
-    """写入包含指标卡片和 Plotly 图表的完整 HTML 报告。"""
+def _write_html(fig: go.Figure, path: str, metrics_html: str = "", extra_html: str = "") -> None:
+    """写入包含指标卡片、年度表格、操作建议和 Plotly 图表的完整 HTML 报告。"""
     plotly_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
 
     html = f"""<!DOCTYPE html>
@@ -127,6 +127,7 @@ body {{ margin:0; padding:0; background:#f5f7fa; font-family: 'Segoe UI', 'PingF
 </head>
 <body>
 {metrics_html}
+{extra_html}
 {plotly_html}
 </body>
 </html>"""
@@ -216,6 +217,34 @@ _METRICS_CSS = """
 .metric-table td.value.negative {
   color: #f56c6c;
 }
+.annual-returns-section {
+  max-width: 1200px; margin: 0 auto 20px; padding: 0 24px;
+}
+.section-card {
+  background: #ffffff; border: 1px solid #e4e7ed;
+  border-radius: 8px; padding: 16px 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.section-title {
+  font-size: 15px; font-weight: 600; color: #303133;
+  margin: 0 0 12px 0; padding-bottom: 8px;
+  border-bottom: 2px solid #409eff;
+}
+.annual-table { width: 100%; border-collapse: collapse; }
+.annual-table th {
+  text-align: left; padding: 6px 8px; font-size: 12px;
+  font-weight: 600; color: #909399; border-bottom: 1px solid #e4e7ed;
+}
+.annual-table td { padding: 5px 8px; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+.annual-table td.year { color: #606266; font-weight: 500; }
+.next-day-section {
+  max-width: 1200px; margin: 0 auto 20px; padding: 0 24px;
+}
+.next-day-card { border-left: 4px solid #409eff; }
+.next-day-content { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.next-day-label { font-size: 13px; color: #909399; }
+.next-day-date { font-size: 14px; font-weight: 600; color: #303133; margin-right: 20px; }
+.next-day-suggestion { font-size: 16px; font-weight: 700; color: #409eff; }
 """
 
 
@@ -611,6 +640,67 @@ def plot_allocation(
 
 
 # ---------------------------------------------------------------------------
+# Annual returns table HTML
+# ---------------------------------------------------------------------------
+
+
+def _build_annual_returns_html(metrics: dict) -> str:
+    """构建年度收益率表格 HTML。"""
+    strat_annual = metrics.get('strategy_annual_returns')
+    bench_annual = metrics.get('benchmark_annual_returns')
+    if not strat_annual:
+        return ''
+
+    rows = []
+    for year in sorted(strat_annual.keys()):
+        s_ret = strat_annual[year]
+        b_ret = bench_annual.get(year, 0.0) if bench_annual else 0.0
+        excess = s_ret - b_ret
+        s_cls = ' positive' if s_ret > 0 else ' negative'
+        b_cls = ' positive' if b_ret > 0 else ' negative'
+        e_cls = ' positive' if excess > 0 else ' negative'
+        rows.append(f'''          <tr>
+            <td class="year">{year}</td>
+            <td class="value{s_cls}">{s_ret:+.2f}%</td>
+            <td class="value{b_cls}">{b_ret:+.2f}%</td>
+            <td class="value{e_cls}">{excess:+.2f}%</td>
+          </tr>''')
+
+    return f'''    <div class="annual-returns-section">
+      <div class="section-card">
+        <h3 class="section-title">年度收益率</h3>
+        <table class="annual-table">
+          <thead>
+            <tr>
+              <th>年份</th><th>策略收益率</th><th>基准收益率</th><th>超额收益</th>
+            </tr>
+          </thead>
+          <tbody>
+{chr(10).join(rows)}
+          </tbody>
+        </table>
+      </div>
+    </div>'''
+
+
+def _build_next_day_html(date_str: str | None, suggestion: str | None) -> str:
+    """构建下一交易日操作建议卡片 HTML。"""
+    if not date_str or not suggestion:
+        return ''
+    return f'''    <div class="next-day-section">
+      <div class="section-card next-day-card">
+        <h3 class="section-title">下一交易日操作建议</h3>
+        <div class="next-day-content">
+          <span class="next-day-label">日期:</span>
+          <span class="next-day-date">{date_str}</span>
+          <span class="next-day-label">建议操作:</span>
+          <span class="next-day-suggestion">{suggestion}</span>
+        </div>
+      </div>
+    </div>'''
+
+
+# ---------------------------------------------------------------------------
 # One-shot generation
 # ---------------------------------------------------------------------------
 
@@ -620,14 +710,18 @@ def generate_report(
     metrics: dict,
     output_path: str,
     benchmark_series: pd.Series | None = None,
+    next_day_date: str | None = None,
+    next_day_suggestion: str | None = None,
 ) -> str:
     """生成完整业绩报告 HTML（单文件）。
 
     页面结构:
     1. 业绩指标卡片组（HTML，按类别分组）
-    2. 净值曲线（含策略净值 + 可选基准指数）
-    3. 回撤曲线
-    4. 持仓比例堆叠图
+    2. 年度收益率表格
+    3. 下一交易日操作建议卡片
+    4. 净值曲线（含策略净值 + 可选基准指数）
+    5. 回撤曲线
+    6. 持仓比例堆叠图
 
     Parameters
     ----------
@@ -641,6 +735,10 @@ def generate_report(
         输出 HTML 文件路径。
     benchmark_series : pd.Series | None
         基准指数净值序列（DatetimeIndex），可选。
+    next_day_date : str | None
+        下一交易日日期字符串（可选）。
+    next_day_suggestion : str | None
+        下一交易日操作建议文本（可选）。
 
     Returns
     -------
@@ -651,11 +749,14 @@ def generate_report(
     trades_df = pd.read_csv(trades_csv)
 
     metrics_html = _build_metrics_html(metrics)
+    annual_html = _build_annual_returns_html(metrics)
+    next_html = _build_next_day_html(next_day_date, next_day_suggestion)
+    extra_html = annual_html + next_html
     fig = _build_report_figure(
         net_worth_df, trades_df, metrics,
         benchmark_series=benchmark_series,
     )
-    _write_html(fig, output_path, metrics_html=metrics_html)
+    _write_html(fig, output_path, metrics_html=metrics_html, extra_html=extra_html)
     return output_path
 
 

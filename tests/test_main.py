@@ -40,7 +40,7 @@ class TestMain:
                 'backtest_engine.run_backtest', return_value=mock_result
             ) as mock_bt:
                 with patch('backtest_engine.compute_and_print_metrics') as mock_cpm:
-                    with patch('backtest_engine.print_next_day_suggestion') as mock_pnd:
+                    with patch('backtest_engine.print_next_day_suggestion', return_value=(None, None)) as mock_pnd:
                         with patch.object(
                             sys,
                             'argv',
@@ -80,7 +80,7 @@ class TestMain:
                 'backtest_engine.run_backtest', return_value=mock_result
             ) as mock_bt:
                 with patch('backtest_engine.compute_and_print_metrics'):
-                    with patch('backtest_engine.print_next_day_suggestion'):
+                    with patch('backtest_engine.print_next_day_suggestion', return_value=(None, None)):
                         with patch.object(
                             sys,
                             'argv',

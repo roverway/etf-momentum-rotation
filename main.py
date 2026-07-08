@@ -37,24 +37,26 @@ def run_backtest_mode(start: str, end: str, initial_cash: float = 1_000_000):
         {code: pos.quantity for code, pos in portfolio.positions.items()},
     )
 
-    # 计算并打印业绩指标
+    # 下一交易日操作建议（在报告生成前计算，传递给 compute_and_print_metrics）
+    last_holding: str | None = (
+        next(iter(portfolio.positions)) if portfolio.positions else None
+    )
+    next_date, suggestion = print_next_day_suggestion(
+        result['calendar'],
+        result['etf_data'],
+        config,
+        last_holding,
+    )
+
+    # 计算并打印业绩指标（含下一交易日建议数据）
     compute_and_print_metrics(
         result['daily_snapshots'],
         result['trade_log'],
         config,
         result['calendar'],
         'backtest_results/',
-    )
-
-    # 下一交易日操作建议
-    last_holding: str | None = (
-        next(iter(portfolio.positions)) if portfolio.positions else None
-    )
-    print_next_day_suggestion(
-        result['calendar'],
-        result['etf_data'],
-        config,
-        last_holding,
+        next_day_date=str(next_date) if next_date else None,
+        next_day_suggestion=suggestion,
     )
 
 

@@ -389,6 +389,8 @@ def compute_and_print_metrics(
     config,
     calendar: list[date],
     output_dir: str,
+    next_day_date: str | None = None,
+    next_day_suggestion: str | None = None,
 ) -> dict:
     """计算全套业绩指标、打印到终端、生成 HTML 报告。
 
@@ -404,6 +406,10 @@ def compute_and_print_metrics(
         交易日历。
     output_dir : str
         CSV 文件所在目录 / 报告输出目录。
+    next_day_date : str | None
+        下一交易日日期字符串（可选）。
+    next_day_suggestion : str | None
+        下一交易日操作建议文本（可选）。
 
     Returns
     -------
@@ -502,7 +508,12 @@ def compute_and_print_metrics(
     report_path = os.path.join(output_dir, 'report.html')
     if os.path.isfile(net_worth_csv) and os.path.isfile(trades_csv):
         try:
-            generate_report(net_worth_csv, trades_csv, metrics, report_path, benchmark_series=benchmark_series)
+            generate_report(
+                net_worth_csv, trades_csv, metrics, report_path,
+                benchmark_series=benchmark_series,
+                next_day_date=next_day_date,
+                next_day_suggestion=next_day_suggestion,
+            )
         except Exception as e:
             logger.warning("生成报告失败: %s", e)
     else:
@@ -627,7 +638,7 @@ def print_next_day_suggestion(
     etf_data: dict[str, pd.DataFrame],
     config,
     last_holding: str | None,
-) -> None:
+) -> tuple[date | None, str | None]:
     """计算下一交易日的操作建议并打印。
 
     Parameters
@@ -640,16 +651,21 @@ def print_next_day_suggestion(
         回测配置（用于获取 ``CHECK_RANGE`` 等参数）。
     last_holding : str or None
         回测结束时的持仓代码，None 表示空仓。
+
+    Returns
+    -------
+    tuple[date | None, str | None]
+        ``(next_date, suggestion)``。当数据不足时返回 ``(None, None)``。
     """
     if not calendar:
         print("⚠ 无交易日历，无法计算下一日建议。")
-        return
+        return None, None
 
     try:
         next_date = get_next_trading_date(calendar[-1])
     except ValueError:
         print("⚠ 无法获取下一交易日（已到最后交易日）。")
-        return
+        return None, None
 
     # Filter data up to next_date
     filtered: dict[str, pd.DataFrame] = {}
@@ -676,3 +692,5 @@ def print_next_day_suggestion(
     print(f"日期: {next_date}")
     print(f"建议操作: {suggestion}")
     print(f"{'=' * 52}\n")
+
+    return next_date, suggestion
