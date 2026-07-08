@@ -412,13 +412,13 @@ def _build_report_figure(
         font=dict(family='Arial, sans-serif', size=12),
         legend=dict(
             orientation='h',
-            y=1.0,
+            y=1.04,
             x=0.5,
             xanchor='center',
             yanchor='bottom',
-            font=dict(size=10),
+            font=dict(size=9),
         ),
-        margin=dict(l=80, r=40, t=140, b=60),
+        margin=dict(l=80, r=40, t=160, b=60),
     )
 
     # ── 轴属性 ──
