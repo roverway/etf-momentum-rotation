@@ -33,9 +33,9 @@ class TestPortfolioBuy:
     def test_buy_new_position_deducts_cash(self):
         pf = Portfolio(cash=1_000_000)
         pf.buy('513100', 5000, 2.0)
-        # effective_price=2.0002, cost=10001.0, comm=2.5, total=10003.5
-        # cash = 1_000_000 - 10003.5 = 989996.5
-        assert pf.cash == 989_996.5
+        # effective_price=2.002, cost=10010.0, comm=2.0, total=10012.0
+        # cash = 1_000_000 - 10012.0 = 989988.0
+        assert pf.cash == 989_988.0
         assert pf.positions['513100'].quantity == 5000
 
     def test_buy_new_position_sets_avg_price(self):
@@ -83,10 +83,10 @@ class TestPortfolioSell:
 
     def test_sell_increases_cash(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)    # cash=989996.5
-        pf.sell('513100', 2000, 2.5)    # net=4998.25
-        # cash = 989996.5 + 4998.25 = 994994.75
-        assert pf.cash == 994_994.75
+        pf.buy('513100', 5000, 2.0)    # cash=989988.0
+        pf.sell('513100', 2000, 2.5)   # net=4994.0 (price*0.999*2000 - comm)
+        # cash = 989988.0 + 4994.0 = 994982.0
+        assert pf.cash == 994_982.0
 
     def test_sell_returns_realized_pnl(self):
         pf = Portfolio(cash=1_000_000)
@@ -146,15 +146,15 @@ class TestPortfolioTotalValue:
     def test_total_value_with_positions(self):
         pf = Portfolio(cash=1_000_000)
         pf.buy('513100', 5000, 2.0)
-        # cash=989996.5, mkt=5000*2.0=10000
-        assert pf.total_value == 1_000_000 - 10003.5 + 5000 * 2.0  # 999996.5
+        # cash=989988.0, mkt=5000*2.0=10000
+        assert pf.total_value == 989_988.0 + 5000 * 2.0  # 999988.0
 
     def test_total_value_after_price_change(self):
         pf = Portfolio(cash=1_000_000)
         pf.buy('513100', 5000, 2.0)
         pf.update_price('513100', 3.0)
-        # cash=989996.5, position mkt=5000*3.0=15000
-        assert pf.total_value == 1_004_996.5
+        # cash=989988.0, position mkt=5000*3.0=15000
+        assert pf.total_value == 1_004_988.0
 
     def test_update_price_nonexistent_ignored(self):
         pf = Portfolio(cash=100_000)
@@ -197,28 +197,28 @@ class TestPortfolioMixedOperations:
 
     def test_buy_then_sell_then_buy_again(self):
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cash=989996.5
-        pf.sell('513100', 5000, 2.5)  # cash=989996.5+12495.63=1,002,492.13
+        pf.buy('513100', 5000, 2.0)   # cash=989988.0
+        pf.sell('513100', 5000, 2.5)  # cash=989988.0+12485.0=1,002,473.0
 
-        pf.buy('513100', 3000, 3.0)   # cash=1,002,492.13-9003.15≈993,488.98
-        assert pf.cash == pytest.approx(993_488.98)
+        pf.buy('513100', 3000, 3.0)   # cash=1,002,473.0-9010.8=993,462.2
+        assert pf.cash == pytest.approx(993_462.2)
         assert pf.positions['513100'].quantity == 3000
         assert pf.total_pnl == 2500.0
 
     def test_scenario_trading_sequence(self):
         """Full scenario: buy ETF-A, buy ETF-B, sell part of A, update prices."""
         pf = Portfolio(cash=1_000_000)
-        pf.buy('513100', 5000, 2.0)   # cash=989996.5
-        pf.buy('159915', 3000, 1.0)   # cash=989996.5-3001.05=986995.45
-        pf.sell('513100', 2000, 2.5)  # cash=986995.45+4998.25=991993.7
+        pf.buy('513100', 5000, 2.0)   # cash=989988.0
+        pf.buy('159915', 3000, 1.0)   # cash=989988.0-3003.6=986984.4
+        pf.sell('513100', 2000, 2.5)  # cash=986984.4+4994.0=991978.4
 
         assert pf.positions['513100'].quantity == 3000
         assert pf.total_pnl == 1000.0
 
         pf.update_price('513100', 3.0)   # mkt=3000*3.0=9000
         pf.update_price('159915', 1.2)   # mkt=3000*1.2=3600
-        # total_value = cash 991993.7 + 9000 + 3600 = 1,004,593.70
-        assert pf.total_value == 1_004_593.70
+        # total_value = cash 991978.4 + 9000 + 3600 = 1,004,578.4
+        assert pf.total_value == 1_004_578.4
 
 
 # =====================================================================

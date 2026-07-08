@@ -52,11 +52,11 @@ class TestBacktestConfig:
 
     def test_default_values(self):
         cfg = BacktestConfig()
-        assert cfg.start_date == '2013-01-01'
+        assert cfg.start_date == '2014-01-01'
         assert cfg.end_date == ''
         assert cfg.initial_cash == 1_000_000
-        assert cfg.commission_rate == 0.00015
-        assert cfg.slippage_rate == 0.0
+        assert cfg.commission_rate == 0.0002
+        assert cfg.slippage_rate == 0.001
         assert cfg.cash_return_rate == 0.0
         assert cfg.benchmark_code == '000300.XSHG'
 

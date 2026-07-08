@@ -12,7 +12,7 @@ from typing import Optional
 
 import pandas as pd
 
-from config import ETF_POOL
+from config import CHECK_RANGE, ETF_POOL
 from data import load_all_etf_data
 from strategy import calculate_momentum_signal
 from trading_calendar import get_previous_trading_date, load_trading_calendar
@@ -45,7 +45,7 @@ def print_signal(result: dict) -> None:
 
 def generate_signal(
     etf_codes: Optional[list[str]] = None,
-    check_range: int = 22,
+    check_range: int = CHECK_RANGE,
 ) -> dict:
     """生成实盘信号。
 

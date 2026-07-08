@@ -71,8 +71,8 @@ class Portfolio:
         code: str,
         quantity: int,
         price: float,
-        commission_rate: float = 0.00025,
-        slippage_rate: float = 0.0001,
+        commission_rate: float = 0.0002,
+        slippage_rate: float = 0.001,
     ) -> None:
         """Buy shares of an ETF.
 
@@ -84,8 +84,8 @@ class Portfolio:
             code: ETF code.
             quantity: Number of shares to buy.
             price: Quoted price per share.
-            commission_rate: Commission rate (default 0.00025 = 万2.5).
-            slippage_rate: Slippage rate (default 0.0001 = 0.01%).
+            commission_rate: Commission rate (default 0.0002 = 万2).
+            slippage_rate: Slippage rate (default 0.001 = 0.1%).
 
         Raises:
             ValueError: If cash is insufficient.
@@ -125,8 +125,8 @@ class Portfolio:
         code: str,
         quantity: int,
         price: float,
-        commission_rate: float = 0.00025,
-        slippage_rate: float = 0.0001,
+        commission_rate: float = 0.0002,
+        slippage_rate: float = 0.001,
     ) -> float:
         """Sell shares of an ETF.
 
@@ -139,8 +139,8 @@ class Portfolio:
             code: ETF code.
             quantity: Number of shares to sell.
             price: Quoted price per share.
-            commission_rate: Commission rate (default 0.00025 = 万2.5).
-            slippage_rate: Slippage rate (default 0.0001 = 0.01%).
+            commission_rate: Commission rate (default 0.0002 = 万2).
+            slippage_rate: Slippage rate (default 0.001 = 0.1%).
 
         Returns:
             Realized PnL: (price - avg_price) * quantity.
