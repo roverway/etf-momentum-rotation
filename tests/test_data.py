@@ -122,7 +122,10 @@ class TestLoadAllETFData:
         # 预置缓存
         mock_ak_data.to_csv(os.path.join(cache_dir, 'sh513100.csv'), index=False)
 
-        with patch('data.ak.fund_etf_hist_sina') as mock_ak:
+        with (
+            patch('data.ak.fund_etf_hist_sina') as mock_ak,
+            patch('data._latest_trading_day', return_value=date(2024, 1, 3)),
+        ):
             result = load_all_etf_data(codes, cache_dir=cache_dir)
 
         mock_ak.assert_not_called()
@@ -151,7 +154,10 @@ class TestLoadAllETFData:
         # 预置 513100 的缓存
         mock_ak_data.to_csv(os.path.join(cache_dir, 'sh513100.csv'), index=False)
 
-        with patch('data.ak.fund_etf_hist_sina', return_value=mock_ak_data) as mock_ak:
+        with (
+            patch('data.ak.fund_etf_hist_sina', return_value=mock_ak_data) as mock_ak,
+            patch('data._latest_trading_day', return_value=date(2024, 1, 3)),
+        ):
             result = load_all_etf_data(codes, cache_dir=cache_dir)
 
         # 只有未命中的 159915 会调 AKShare
@@ -165,7 +171,10 @@ class TestLoadAllETFData:
         os.makedirs(cache_dir)
         mock_ak_data.to_csv(os.path.join(cache_dir, 'sh513100.csv'), index=False)
 
-        with patch('data.ak.fund_etf_hist_sina') as mock_ak:
+        with (
+            patch('data.ak.fund_etf_hist_sina') as mock_ak,
+            patch('data._latest_trading_day', return_value=date(2024, 1, 3)),
+        ):
             result = load_all_etf_data(codes, cache_dir=cache_dir)
 
         df = result['513100.XSHG']
@@ -273,7 +282,10 @@ class TestFetchBenchmarkData:
     def test_cache_and_reuse(self, tmp_path, mock_index_data):
         """第二次调用应从缓存读取"""
         cache_dir = str(tmp_path / 'data_cache')
-        with patch('data.ak.stock_zh_index_daily', return_value=mock_index_data) as mock_ak:
+        with (
+            patch('data.ak.stock_zh_index_daily', return_value=mock_index_data) as mock_ak,
+            patch('data._latest_trading_day', return_value=date(2024, 6, 14)),
+        ):
             # 第一次调用：下载并缓存
             df1 = fetch_benchmark_data('000300.XSHG', cache_dir=cache_dir)
             assert mock_ak.call_count == 1

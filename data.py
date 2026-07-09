@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 
@@ -14,6 +15,7 @@ import akshare as ak
 import pandas as pd
 
 from config import map_to_sina_code
+from trading_calendar import load_trading_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,16 @@ def fetch_single_etf(sina_code: str) -> pd.DataFrame:
     except Exception as e:
         logger.warning("⚠ 下载 %s 失败: %s", sina_code, e)
         return pd.DataFrame()
+
+
+def _latest_trading_day() -> datetime.date:
+    """返回最近一个交易日（≤ 今天）。"""
+    cal = load_trading_calendar()
+    today = datetime.date.today()
+    for d in reversed(cal):
+        if d <= today:
+            return d
+    return cal[-1]  # fallback: 最早的交易日（一般不可能走到这里）
 
 
 def load_all_etf_data(
@@ -74,11 +86,25 @@ def load_all_etf_data(
 
         if os.path.isfile(cache_path):
             df = pd.read_csv(cache_path)
-            # 将 CSV 中字符串格式的日期还原为 datetime.date
             df["date"] = pd.to_datetime(df["date"]).dt.date
+            # 检查缓存是否包含最新交易日数据
+            latest_cache = df["date"].max()
+            latest_trade = _latest_trading_day()
+            if latest_cache < latest_trade:
+                logger.info(
+                    "缓存过期 %s（最新 %s < 最新交易日 %s），重新下载",
+                    sina_code, latest_cache, latest_trade,
+                )
+                fresh = fetch_single_etf(sina_code)
+                if not fresh.empty:
+                    df = fresh
+                    df.to_csv(cache_path, index=False)
+                else:
+                    logger.warning("下载 %s 失败，使用过期缓存", sina_code)
         else:
             df = fetch_single_etf(sina_code)
-            df.to_csv(cache_path, index=False)
+            if not df.empty:
+                df.to_csv(cache_path, index=False)
 
         if 'volume' in df.columns:
             zero_vol = df[df['volume'] == 0]
@@ -119,7 +145,14 @@ def fetch_benchmark_data(
     if os.path.isfile(cache_path):
         df = pd.read_csv(cache_path)
         df['date'] = pd.to_datetime(df['date']).dt.date
-        return df
+        latest_cache = df['date'].max()
+        latest_trade = _latest_trading_day()
+        if latest_cache >= latest_trade:
+            return df
+        logger.info(
+            "缓存过期 %s（最新 %s < 最新交易日 %s），重新下载",
+            benchmark_code, latest_cache, latest_trade,
+        )
 
     sina_code = map_to_sina_code(benchmark_code)
     try:
