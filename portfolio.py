@@ -96,14 +96,14 @@ class Portfolio:
         effective_price = price * (1 + slippage_rate)
         cost = quantity * effective_price
         commission = round(cost * commission_rate, 2)
-        total_cost = cost + commission
+        total_cost = round(cost + commission, 2)
 
         if total_cost > self.cash + 1e-4:
             raise ValueError(
                 f"Insufficient cash: need {total_cost:.2f}, have {self.cash:.2f}"
             )
 
-        self.cash -= total_cost
+        self.cash = round(self.cash - total_cost, 2)
 
         # avg_price uses original price (no slippage / commission)
         if code in self.positions:
@@ -169,7 +169,7 @@ class Portfolio:
         realized = (price - pos.avg_price) * quantity
         self._total_pnl += realized
 
-        self.cash += net_proceeds
+        self.cash = round(self.cash + net_proceeds, 2)
 
         pos.quantity -= quantity
         if pos.quantity == 0:
