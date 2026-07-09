@@ -26,7 +26,7 @@ from config import ETF_POOL, CHECK_RANGE, REBALANCE_THRESHOLD, VOL_CHECK_RANGE, 
 from data import load_all_etf_data
 from portfolio import Portfolio
 from strategy import calculate_momentum_signal, compute_all_momentum_signals
-from trading_calendar import get_next_trading_date, load_trading_calendar
+from trading_calendar import get_next_trading_date, get_previous_trading_date, load_trading_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ def _run_backtest_loop_legacy(
             curr_mom = scores.get(current_holding)
             tgt_mom = scores.get(target)
             if curr_mom is not None and tgt_mom is not None:
-                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
+                if tgt_mom - curr_mom >= REBALANCE_THRESHOLD:
                     should_rebalance = True
             else:
                 pass
@@ -329,22 +329,43 @@ def _run_backtest_loop_vectorized(
         )
         data_warning_logged = True
 
-    # ── Step 1: Build unified close-price DataFrame (done once) ─────────────────
-    # Use codes actually available in etf_data, not config-level etf_codes,
-    # so that tests with mock ETF codes (e.g. 'ETF_A', 'ETF_B') work correctly.
+    # ── Step 1a: Extend index backward for data sufficiency ─────────────────────
+    # main 分支的逐日回测中 calculate_momentum_signal() 拿到的 ETF 数据包含
+    # 回测开始前的全部历史（如 2014 年起），.tail(check_range) 自然包含了
+    # 回测第 1 天之前的 21 个交易日，所以第 1 天就能算出有效信号。
+    #
+    # 而向量化路径用 prices_df.pct_change(periods=N) 算信号，矩阵必须包含
+    # 回测开始前的 N 行数据，否则 pct_change 从第 0 行就是 NaN。
+    #
+    # 这里把 prices_df 的 index 向前扩展 max(check_range, vol_check_range)-1
+    # 个交易日，算完信号矩阵后再 .loc[] 切回回测定日范围。
+    # 这样回测第 0 天起 pct_change / rolling_vol 就有基于前期数据的有效值，
+    # 与 main 分支的行为保持一致。
+    lookback = max(CHECK_RANGE, VOL_CHECK_RANGE) - 1
+    full_cal = load_trading_calendar()
+    try:
+        pre_start = get_previous_trading_date(calendar[0], n=lookback)
+    except ValueError:
+        pre_start = full_cal[0]
+    pre_dates = [d for d in full_cal if pre_start <= d < calendar[0]]
+    extended_idx = pd.Index(pre_dates + calendar, name='date')
+
+    # ── Step 1b: Build unified close-price DataFrame (done once) ─────────────────
     data_codes = [c for c in etf_codes if c in etf_data] or list(etf_data.keys())
     calendar_idx = pd.Index(calendar, name='date')
-    prices_df = pd.DataFrame(index=calendar_idx)
+    prices_df = pd.DataFrame(index=extended_idx)
     for code in data_codes:
         etf_close = etf_data[code].set_index('date')['close']
         prices_df[code] = prices_df.index.map(etf_close.get)
 
     # ── Step 2: Pre-compute signal matrix (done once) ───────────────────────────
-    scores_df = compute_all_momentum_signals(
+    scores_df_full = compute_all_momentum_signals(
         prices_df, CHECK_RANGE,
         vol_check_range=VOL_CHECK_RANGE,
         vol_lambda=VOLATILITY_LAMBDA,
     )
+    # Slice to backtest dates only (drop the pre-dates we padded)
+    scores_df = scores_df_full.loc[calendar_idx]
 
     # ── Step 3: Vectorized daily target selection ───────────────────────────────
     # Handle all-NaN rows safely: idxmax raises on all-NaN, so compute only
@@ -370,11 +391,11 @@ def _run_backtest_loop_vectorized(
         target = target_list[i]
 
         # Check data sufficiency (use pre-computed mask + list)
-        if i < CHECK_RANGE - 1 or not valid_mask[i]:
-            if not data_warning_logged and i >= CHECK_RANGE - 1 and not valid_mask[i]:
+        if not valid_mask[i]:
+            if not data_warning_logged and not valid_mask[i]:
                 logger.warning(
-                    "数据不足: 信号全为 NaN (CHECK_RANGE=%d)，跳过 %s",
-                    CHECK_RANGE, trade_date,
+                    "数据不足: 所有 ETF 信号均为 NaN，跳过 %s",
+                    trade_date,
                 )
                 data_warning_logged = True
             daily_snapshots.append({
@@ -395,7 +416,7 @@ def _run_backtest_loop_vectorized(
             curr_mom = scores.get(current_holding)
             tgt_mom = scores.get(target)
             if curr_mom is not None and tgt_mom is not None:
-                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
+                if tgt_mom - curr_mom >= REBALANCE_THRESHOLD:
                     should_rebalance = True
         elif target is not None and current_holding is None:
             should_rebalance = True
