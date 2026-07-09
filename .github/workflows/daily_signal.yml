@@ -1,0 +1,54 @@
+name: 实盘信号
+
+on:
+  schedule:
+    # 北京时间 15:30 = UTC 07:30（A 股 15:00 收盘）
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.4.30/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: 安装依赖
+        run: uv sync
+
+      - name: 运行实盘信号
+        id: signal
+        run: |
+          OUTPUT=$(uv run python3 main.py signal 2>&1)
+          echo "output<<EOF" >> $GITHUB_OUTPUT
+          echo "$OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # 提取 TARGET 行
+          TARGET=$(echo "$OUTPUT" | grep 'TARGET:' | sed 's/TARGET: //')
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+
+      - name: 推送到 Server酱
+        run: |
+          OUTPUT='${{ steps.signal.outputs.output }}'
+          TARGET='${{ steps.signal.outputs.target }}'
+          
+          # 格式化推送内容
+          DESP=$(cat <<ENDDESP
+          ### ETF 动量轮动策略 - 实盘信号
+          ---
+          \`\`\`
+          ${OUTPUT}
+          \`\`\`
+          ---
+          *自动运行于 GitHub Actions*
+          ENDDESP
+          )
+          
+          curl -X POST "https://sct.ftqq.com/${{ secrets.SERVERCHAN_KEY }}.send" \
+            -d title="ETF信号: ${TARGET}" \
+            -d desp="${DESP}"
