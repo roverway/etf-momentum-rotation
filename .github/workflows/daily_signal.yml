@@ -4,7 +4,7 @@ on:
   schedule:
     # 北京时间 08:30 = UTC 00:30（盘前查看信号）
     - cron: '30 0 * * 1-5'
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   signal:
@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main    # 确保走 main 分支代码
+          ref: main
 
       - name: 缓存 uv
         uses: actions/cache@v4
@@ -34,34 +34,11 @@ jobs:
         run: uv pip install -r requirements.txt
 
       - name: 运行实盘信号
-        id: signal
         run: |
-          OUTPUT=$(uv run python3 main.py signal 2>&1)
-          echo "output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          # 提取 TARGET 行
-          TARGET=$(echo "$OUTPUT" | grep 'TARGET:' | sed 's/TARGET: //')
-          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          uv run python3 main.py signal 2>&1 | tee /tmp/signal_output.txt
 
       - name: 推送到 Server酱
         run: |
-          OUTPUT='${{ steps.signal.outputs.output }}'
-          TARGET='${{ steps.signal.outputs.target }}'
-          
-          # 格式化推送内容
-          DESP=$(cat <<ENDDESP
-          ### ETF 动量轮动策略 - 实盘信号
-          ---
-          \`\`\`
-          ${OUTPUT}
-          \`\`\`
-          ---
-          *自动运行于 GitHub Actions*
-          ENDDESP
-          )
-          
-          curl -X POST "https://sct.ftqq.com/${{ secrets.SERVERCHAN_KEY }}.send" \
-            -d title="ETF信号: ${TARGET}" \
-            -d desp="${DESP}"
+          curl -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_KEY }}.send" \
+            --data-urlencode "title=ETF实盘信号" \
+            --data-urlencode "desp@/tmp/signal_output.txt"
