@@ -132,6 +132,48 @@ def calculate_momentum_signal(
     return None, scores
 
 
+def compute_all_momentum_signals(
+    prices_df: pd.DataFrame,
+    check_range: int = 22,
+) -> pd.DataFrame:
+    """Compute risk-adjusted momentum signals for all ETFs across all dates at once.
+
+    Vectorized equivalent of calling ``calculate_momentum_signal()`` for every
+    calendar date individually.  Uses a rolling window so the result for date *t*
+    is the same momentum that the per-day function would compute with
+    ``base_date=t``.
+
+    Parameters
+    ----------
+    prices_df : pd.DataFrame
+        Close-price matrix, ``index=date``, ``columns=etf_codes``, values = close
+        price.  Dates with no data for a particular ETF should be ``NaN``.
+    check_range : int
+        Lookback window in trading days (default 22).
+
+    Returns
+    -------
+    pd.DataFrame
+        Risk-adjusted momentum (Sharpe-style) for each ETF on each date.
+        Same index/columns shape as *prices_df*.
+        The first ``check_range - 1`` rows are all ``NaN`` (insufficient data).
+    """
+    # Rolling raw return over check_range-1 periods: (p_t - p_{t-N+1}) / p_{t-N+1}
+    raw_returns = prices_df.pct_change(periods=check_range - 1)
+
+    # Daily returns for volatility estimation
+    daily_rets = prices_df.pct_change()
+
+    # Rolling annualized volatility (std of (check_range-1) daily returns × √252)
+    rolling_vol = daily_rets.rolling(window=check_range - 1).std() * math.sqrt(252)
+
+    # Risk-adjusted momentum — guard against zero-vol (constant price) columns
+    EPS = 1e-10
+    momentum = raw_returns / rolling_vol.replace(0, EPS)
+
+    return momentum
+
+
 # =====================================================================================
 # Trade signal logging
 # =====================================================================================

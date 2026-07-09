@@ -11,7 +11,7 @@ import logging
 import pandas as pd
 import pytest
 
-from strategy import calculate_momentum_signal, log_trade_signal, setup_logger
+from strategy import calculate_momentum_signal, log_trade_signal, setup_logger, compute_all_momentum_signals
 
 
 # =====================================================================================
@@ -360,3 +360,112 @@ class TestSetupLogger:
     def test_default_name(self):
         logger = setup_logger()
         assert logger.name == 'strategy'
+
+
+# =====================================================================================
+# Tests: compute_all_momentum_signals (vectorized)
+# =====================================================================================
+
+class TestComputeAllMomentumSignals:
+    """Vectorized signal matrix — must match per-day calculate_momentum_signal."""
+
+    def _build_prices_df(self, n_etfs: int = 3, n_days: int = 100,
+                         base_price: float = 10.0, seed: int = 42) -> pd.DataFrame:
+        """Build a synthetic close-price DataFrame for testing."""
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        dates = pd.bdate_range('2024-01-02', periods=n_days, freq='B')
+        prices = {}
+        for i in range(n_etfs):
+            drift = 0.001 * (1 + (i - n_etfs / 2) * 0.3)
+            returns = rng.normal(drift, 0.02, n_days)
+            prices[f'ETF_{chr(65 + i)}'] = base_price * np.exp(np.cumsum(returns))
+        return pd.DataFrame(prices, index=dates)
+
+    def _etf_data_dict_from_prices(self, prices_df: pd.DataFrame) -> dict:
+        """Convert prices_df to dict of {code: DataFrame} for old API."""
+        result = {}
+        for code in prices_df.columns:
+            df = pd.DataFrame({
+                'date': prices_df.index.date,
+                'close': prices_df[code].values,
+            })
+            result[code] = df
+        return result
+
+    def test_matches_per_day_calls(self):
+        """Vectorized signal == per-day calculate_momentum_signal on every date."""
+        check_range = 22
+        prices_df = self._build_prices_df(n_etfs=3, n_days=100)
+        etf_data_dict = self._etf_data_dict_from_prices(prices_df)
+
+        # Per-day: calls old function for each row
+        per_day_signals = []
+        for t in prices_df.index:
+            target, scores = calculate_momentum_signal(
+                etf_data_dict, check_range, base_date=t.date(),
+            )
+            per_day_signals.append(scores)
+
+        # Vectorized
+        vectorized = compute_all_momentum_signals(prices_df, check_range)
+
+        # Compare row by row (only non-NaN rows)
+        for i, t in enumerate(prices_df.index):
+            vec_row = vectorized.loc[t].dropna()
+            if vec_row.empty:
+                continue  # both sides should be empty/NaN
+            old_row = per_day_signals[i]
+            for code in vec_row.index:
+                assert abs(vec_row[code] - old_row.get(code, 0)) < 1e-10, \
+                    f"Mismatch at {t} for {code}: vec={vec_row[code]}, old={old_row.get(code)}"
+
+    def test_nan_start_period(self):
+        """First check_range-1 rows are all NaN."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=50)
+        result = compute_all_momentum_signals(prices_df, check_range=22)
+        # First 21 rows should be all NaN
+        assert result.iloc[:21].isna().all().all(), "First check_range-1 rows should be NaN"
+        # Row 22 (index 21) should have non-NaN values
+        assert not result.iloc[21].isna().all(), "Row check_range should have values"
+
+    def test_zero_volatility_no_crash(self):
+        """Constant price column does not cause division error."""
+        dates = pd.bdate_range('2024-01-02', periods=50, freq='B')
+        prices_df = pd.DataFrame({
+            'ETF_A': [10.0] * 50,       # zero volatility
+            'ETF_B': [10.0 * (1 + 0.01 * i) for i in range(50)],  # normal
+        }, index=dates)
+        result = compute_all_momentum_signals(prices_df, check_range=22)
+        # No exception raised; constant column should have 0 or NaN momentum
+        assert 'ETF_A' in result.columns
+
+    def test_single_etf(self):
+        """Works with a single ETF column."""
+        dates = pd.bdate_range('2024-01-02', periods=50, freq='B')
+        prices = [10.0 * (1 + 0.01 * i) for i in range(50)]
+        prices_df = pd.DataFrame({'ETF_X': prices}, index=dates)
+        result = compute_all_momentum_signals(prices_df, check_range=22)
+        assert result.shape == (50, 1)
+        assert result.columns.tolist() == ['ETF_X']
+
+    def test_exact_check_range(self):
+        """Exactly check_range rows of data produces 1 valid signal row."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=22)
+        result = compute_all_momentum_signals(prices_df, check_range=22)
+        # First 21 NaN, last row should be valid
+        assert result.iloc[:21].isna().all().all()
+        assert not result.iloc[21:].isna().all().all()
+
+    def test_less_than_check_range(self):
+        """Less data than check_range returns all NaN."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=10)
+        result = compute_all_momentum_signals(prices_df, check_range=22)
+        assert result.isna().all().all()
+
+    def test_default_check_range(self):
+        """Default check_range=22 works."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=50)
+        result = compute_all_momentum_signals(prices_df)  # no check_range arg
+        assert result.shape == (50, 2)
+        assert result.iloc[:21].isna().all().all()
