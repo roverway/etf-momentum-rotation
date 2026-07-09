@@ -28,7 +28,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: 安装依赖
-        run: uv pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
       - name: 运行实盘信号
         id: signal
