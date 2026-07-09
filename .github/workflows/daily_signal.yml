@@ -35,10 +35,17 @@ jobs:
 
       - name: 运行实盘信号
         run: |
-          uv run python3 main.py signal 2>&1 | tee /tmp/signal_output.txt
+          uv run python3 main.py signal 2>&1 | tee /tmp/signal_raw.txt
 
       - name: 推送到 Server酱
         run: |
+          # 只保留 "信号生成" 之后的内容，放在代码块中保持格式
+          {
+            echo '```'
+            sed -n '/信号生成/,$p' /tmp/signal_raw.txt
+            echo '```'
+          } > /tmp/signal_output.txt
+
           curl -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_KEY }}.send" \
             --data-urlencode "title=ETF实盘信号" \
             --data-urlencode "desp@/tmp/signal_output.txt"
