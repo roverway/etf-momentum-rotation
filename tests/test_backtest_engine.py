@@ -106,12 +106,12 @@ class TestRunBacktest:
         dates = _make_dates(periods=25)
         mock_cal.return_value = dates
 
-        # ETF_A always outperforms ETF_B → signal never changes
+        # ETF_A steadily up, ETF_B steadily down → signal stays on A
         etf_data = {
             'ETF_A': _make_etf_df(dates,
                                    [10.0 + i * 0.5 for i in range(25)]),
             'ETF_B': _make_etf_df(dates,
-                                   [10.0 + i * 0.1 for i in range(25)]),
+                                   [10.0 - i * 0.1 for i in range(25)]),   # steadily down
         }
         config = BacktestConfig(
             start_date='2024-01-02', end_date='2024-02-05',

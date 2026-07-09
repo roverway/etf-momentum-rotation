@@ -24,6 +24,7 @@ Supporting
 from __future__ import annotations
 
 import logging
+import math
 
 import pandas as pd
 
@@ -94,31 +95,32 @@ def calculate_momentum_signal(
         return None
     all_prices = all_prices.tail(check_range)
 
-    # ── 3. RQ logic: DataFrame path vs Series path ──────────────────────────
-    valid_returns: dict[str, float] = {}
+    # ── 3. Compute volatility-adjusted momentum (Sharpe-style) ────────────
+    #   Formula: Momentum = (p_latest - p_start) / p_start / annualized_vol
+    #   This normalizes raw return by risk, so a "steady climber" beats a
+    #   "volatile gambler" with the same raw return.
+    start_prices = all_prices.iloc[0]
+    last_prices = all_prices.iloc[-1]
+    raw_returns = (last_prices - start_prices) / start_prices
 
-    if all_prices.shape[1] > 1:
-        # ── Multi-ETF (DataFrame) path ──
-        start_prices = all_prices.iloc[0]
-        last_prices = all_prices.iloc[-1]
-        etf_returns = (last_prices - start_prices) / start_prices
-        valid_returns = etf_returns.dropna().to_dict()
-    else:
-        # ── Single-ETF (Series) path ──
-        the_one = all_prices.columns[0]
-        start_price = all_prices.iloc[0, 0]
-        last_price = all_prices.iloc[-1, 0]
-        if pd.notna(start_price) and pd.notna(last_price):
-            valid_returns[the_one] = (last_price - start_price) / start_price
+    # Annualized volatility from daily returns within the window
+    daily_rets = all_prices.pct_change().iloc[1:]
+    ann_vol = daily_rets.std() * math.sqrt(252)
 
-    if not valid_returns:
+    # Return per unit of risk — guard against zero-vol (constant price)
+    eps = 1e-10
+    risk_adjusted = raw_returns / ann_vol.replace(0, eps)
+    momentum = risk_adjusted.dropna()
+
+    if momentum.empty:
         return None
 
     # ── 4. Pick best ────────────────────────────────────────────────────────
-    #   ``sorted(…)`` provides deterministic tie-breaking (alphabetical order).
-    best_etf = max(sorted(valid_returns), key=valid_returns.get)
+    #   ``sort_index()`` then ``idxmax()`` provides deterministic tie-breaking
+    #   (alphabetical order when two ETFs have identical momentum).
+    best_etf = momentum.sort_index().idxmax()
 
-    if valid_returns[best_etf] > 0:
+    if momentum[best_etf] > 0:
         return best_etf
 
     return None

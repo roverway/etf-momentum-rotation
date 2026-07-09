@@ -45,27 +45,31 @@ class TestCalculateMomentumSignal:
 
     # -- normal multi-ETF -------------------------------------------------------
 
-    def test_selects_etf_with_highest_positive_return(self):
-        """Multi-ETF: pick the one with highest positive momentum."""
+    def test_selects_steady_climber_over_volatile_one(self):
+        """Multi-ETF: volatility-adjusted momentum prefers steady risers."""
         n = 22
         data = {
-            '513100.XSHG': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),   # ↑  +105%
-            '159915.XSHE': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),   # ↑   +21%
-            '518880.XSHG': _make_etf_df([10.0 - i * 0.1 for i in range(n)]),   # ↓   -21%
+            '513100.XSHG': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),   # ↑ +105%, high vol
+            '159915.XSHE': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),   # ↑  +21%, very low vol
+            '518880.XSHG': _make_etf_df([10.0 - i * 0.1 for i in range(n)]),   # ↓  -21%
         }
         result = calculate_momentum_signal(data, check_range=22)
-        assert result == '513100.XSHG'
+        # 159915.XSHE wins because its extremely steady climb gives it the best
+        # risk-adjusted return, despite having a lower raw return than 513100.XSHG.
+        assert result == '159915.XSHE'
 
-    def test_selects_correct_etf_with_varying_positive_returns(self):
-        """Multi-ETF: highest positive wins even when others are also positive."""
+    def test_steady_low_return_beats_volatile_high_return(self):
+        """Multi-ETF: a steady lower-return ETF can beat a volatile high-return one."""
         n = 22
         data = {
-            'ETF_A': _make_etf_df([5.0 + i * 0.2 for i in range(n)]),   #  +84%
-            'ETF_B': _make_etf_df([5.0 + i * 0.5 for i in range(n)]),   # +210% ← winner
-            'ETF_C': _make_etf_df([5.0 + i * 0.3 for i in range(n)]),   # +126%
+            'ETF_A': _make_etf_df([5.0 + i * 0.2 for i in range(n)]),   #  +84%, lowest vol
+            'ETF_B': _make_etf_df([5.0 + i * 0.5 for i in range(n)]),   # +210%, highest vol
+            'ETF_C': _make_etf_df([5.0 + i * 0.3 for i in range(n)]),   # +126%, medium vol
         }
         result = calculate_momentum_signal(data, check_range=22)
-        assert result == 'ETF_B'
+        # ETF_A has the lowest return but also the lowest volatility,
+        # giving it the best risk-adjusted return.
+        assert result == 'ETF_A'
 
     # -- all negative / no positive --------------------------------------------
 
@@ -134,11 +138,12 @@ class TestCalculateMomentumSignal:
         n = 22
         data = {
             'SHORT': _make_etf_df([10.0, 11.0, 12.0]),                      # too short
-            'LONG_A': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),      # ↑ winner
-            'LONG_B': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),      # ↑ lower
+            'LONG_A': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),      # ↑ high vol
+            'LONG_B': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),      # ↑ low vol
         }
         result = calculate_momentum_signal(data, check_range=22)
-        assert result == 'LONG_A'
+        # LONG_B wins on risk-adjusted basis (steadier climb, much lower vol)
+        assert result == 'LONG_B'
 
     # -- deterministic tie-breaking --------------------------------------------
 
@@ -234,6 +239,63 @@ class TestCalculateMomentumSignal:
         }
         result = calculate_momentum_signal(data, check_range=22)
         assert result is None
+
+    # -- volatility adjustment specifics ---------------------------------------
+
+    def test_lower_vol_beats_higher_vol_with_same_return(self):
+        """Same raw return → lower volatility ETF wins on risk-adjusted basis."""
+        n = 22
+        # ETF_A: steady linear rise → low vol
+        low_vol_prices = [100.0 + i * 0.5 for i in range(n)]
+        # ETF_B: same start/end but oscillating → high vol
+        high_vol_prices = []
+        for i in range(n):
+            base = 100.0 + i * 0.5
+            # Oscillate ±2 around the linear trend to inflate vol
+            oscillation = 2.0 if i % 2 == 0 else -2.0
+            high_vol_prices.append(base + oscillation)
+        data = {
+            'STEADY': _make_etf_df(low_vol_prices),
+            'WILD': _make_etf_df(high_vol_prices),
+        }
+        result = calculate_momentum_signal(data, check_range=22)
+        assert result == 'STEADY'
+
+    def test_volatility_adjustment_preference_over_raw_return(self):
+        """A steady ETF with modest return can beat a wild one with higher return."""
+        n = 22
+        # STEADY: modest +10% return, very low vol
+        steady = [100.0 + i * 0.5 for i in range(n)]  # ends at 110.5, +10.5%
+        # WILD: high +20% return but high vol
+        wild = []
+        for i in range(n):
+            base = 100.0 + i * 1.0  # faster climb → +21%
+            oscillation = 4.0 if i % 2 == 0 else -4.0
+            wild.append(base + oscillation)
+        data = {
+            'STEADY': _make_etf_df(steady),
+            'WILD': _make_etf_df(wild),
+        }
+        result = calculate_momentum_signal(data, check_range=22)
+        # STEADY should win despite lower raw return, because its vol is much lower
+        assert result == 'STEADY'
+
+    def test_high_vol_positive_return_can_still_win_if_no_steady_alternative(self):
+        """If the only positive return ETF is volatile, it still wins (no better option)."""
+        n = 22
+        # Only one ETF has positive return (volatile but positive)
+        volatile_up = []
+        for i in range(n):
+            base = 100.0 + i * 0.3
+            oscillation = 3.0 if i % 2 == 0 else -3.0
+            volatile_up.append(base + oscillation)
+        data = {
+            'UP_WILD': _make_etf_df(volatile_up),
+            'DOWN': _make_etf_df([100.0 - i * 0.1 for i in range(n)]),
+        }
+        result = calculate_momentum_signal(data, check_range=22)
+        # UP_WILD is the only positive → selected
+        assert result == 'UP_WILD'
 
 
 # =====================================================================================
