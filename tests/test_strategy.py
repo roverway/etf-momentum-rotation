@@ -469,3 +469,30 @@ class TestComputeAllMomentumSignals:
         result = compute_all_momentum_signals(prices_df)  # no check_range arg
         assert result.shape == (50, 2)
         assert result.iloc[:21].isna().all().all()
+
+    def test_custom_vol_settings(self):
+        """Separate vol window and lambda produce different results."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=100)
+        # Default (vol_check_range=22, lambda=1.0)
+        result_default = compute_all_momentum_signals(prices_df, check_range=22)
+        # Custom (longer vol window, lower lambda)
+        result_custom = compute_all_momentum_signals(
+            prices_df, check_range=22,
+            vol_check_range=60, vol_lambda=0.5,
+        )
+        # Values should differ
+        assert not result_default.iloc[60:].equals(result_custom.iloc[60:]), \
+            "Different vol settings should produce different signals"
+
+    def test_vol_lambda_zero_equals_raw_return(self):
+        """λ=0 → momentum = raw return (vol completely disabled)."""
+        prices_df = self._build_prices_df(n_etfs=2, n_days=100)
+        # With λ=0, momentum should equal raw return (no vol adjustment)
+        result = compute_all_momentum_signals(prices_df, check_range=22, vol_lambda=0.0)
+        # The raw returns should be the same as pct_change(periods=21)
+        expected_raw = prices_df.pct_change(periods=21)
+        # Result should match raw_returns where not NaN
+        for col in prices_df.columns:
+            valid = ~result[col].isna() & ~expected_raw[col].isna()
+            assert result[col][valid].sub(expected_raw[col][valid]).abs().max() < 1e-10, \
+                f"λ=0 should match raw return for {col}"

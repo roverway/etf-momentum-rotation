@@ -108,7 +108,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -141,7 +141,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -168,7 +168,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -213,7 +213,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -249,7 +249,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -274,7 +274,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 5):
+        with patch('backtest_engine.CHECK_RANGE', 5), patch('backtest_engine.VOL_CHECK_RANGE', 5):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -303,7 +303,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 5):
+        with patch('backtest_engine.CHECK_RANGE', 5), patch('backtest_engine.VOL_CHECK_RANGE', 5):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -343,7 +343,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data={})
 
         portfolio = result['portfolio']
@@ -368,7 +368,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -391,7 +391,7 @@ class TestRunBacktest:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -421,7 +421,7 @@ class TestRunBacktestEdgeCases:
         )
 
         caplog.set_level(logging.WARNING)
-        with patch('backtest_engine.CHECK_RANGE', 22):
+        with patch('backtest_engine.CHECK_RANGE', 22), patch('backtest_engine.VOL_CHECK_RANGE', 22):
             result = run_backtest(config, etf_data=etf_data)
 
         portfolio = result['portfolio']
@@ -575,7 +575,7 @@ class TestPrintNextDaySuggestion:
         }
         config = BacktestConfig(start_date='2024-01-01', end_date='2024-02-05')
 
-        with patch('backtest_engine.CHECK_RANGE', 1):
+        with patch('backtest_engine.CHECK_RANGE', 1), patch('backtest_engine.VOL_CHECK_RANGE', 1):
             print_next_day_suggestion(calendar, etf_data, config, None)
 
         mock_signal.assert_called_once()

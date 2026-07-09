@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from config import ETF_POOL, CHECK_RANGE, REBALANCE_THRESHOLD, BacktestConfig
+from config import ETF_POOL, CHECK_RANGE, REBALANCE_THRESHOLD, VOL_CHECK_RANGE, VOLATILITY_LAMBDA, BacktestConfig
 from data import load_all_etf_data
 from portfolio import Portfolio
 from strategy import calculate_momentum_signal, compute_all_momentum_signals
@@ -207,10 +207,11 @@ def _run_backtest_loop_legacy(
             continue
 
         max_rows = max(len(sub) for sub in etf_data_dict.values())
-        if max_rows < CHECK_RANGE:
+        needed = max(CHECK_RANGE, VOL_CHECK_RANGE)
+        if max_rows < needed:
             logger.warning(
-                "数据不足: 最大行数 %d < %d (CHECK_RANGE)，跳过 %s",
-                max_rows, CHECK_RANGE, trade_date,
+                "数据不足: 最大行数 %d < %d (needed=max(CHECK_RANGE, VOL_CHECK_RANGE))，跳过 %s",
+                max_rows, needed, trade_date,
             )
             continue
 
@@ -218,6 +219,8 @@ def _run_backtest_loop_legacy(
         scores: dict[str, float]
         target, scores = calculate_momentum_signal(
             etf_data_dict, CHECK_RANGE, trade_date,
+            vol_check_range=VOL_CHECK_RANGE,
+            vol_lambda=VOLATILITY_LAMBDA,
         )
 
         current_holding: str | None = (
@@ -337,7 +340,11 @@ def _run_backtest_loop_vectorized(
         prices_df[code] = prices_df.index.map(etf_close.get)
 
     # ── Step 2: Pre-compute signal matrix (done once) ───────────────────────────
-    scores_df = compute_all_momentum_signals(prices_df, CHECK_RANGE)
+    scores_df = compute_all_momentum_signals(
+        prices_df, CHECK_RANGE,
+        vol_check_range=VOL_CHECK_RANGE,
+        vol_lambda=VOLATILITY_LAMBDA,
+    )
 
     # ── Step 3: Vectorized daily target selection ───────────────────────────────
     # Handle all-NaN rows safely: idxmax raises on all-NaN, so compute only
@@ -867,7 +874,11 @@ def print_next_day_suggestion(
         if max_rows < check_range:
             suggestion = f"数据不足（{max_rows} 行 < {check_range}），无法计算信号"
         else:
-            target, _ = calculate_momentum_signal(filtered, check_range, base_date=next_date)
+            target, _ = calculate_momentum_signal(
+                filtered, check_range, base_date=next_date,
+                vol_check_range=VOL_CHECK_RANGE,
+                vol_lambda=VOLATILITY_LAMBDA,
+            )
             if target is not None:
                 suggestion = f"BUY {target}"
             else:

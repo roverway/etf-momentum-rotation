@@ -256,7 +256,7 @@ class TestRunBacktestCSVOutput:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             result = run_backtest(config, etf_data=etf_data, output_dir=str(tmp_path))
 
         portfolio = result['portfolio']
@@ -291,7 +291,7 @@ class TestRunBacktestCSVOutput:
             initial_cash=1_000_000,
         )
 
-        with patch('backtest_engine.CHECK_RANGE', 3):
+        with patch('backtest_engine.CHECK_RANGE', 3), patch('backtest_engine.VOL_CHECK_RANGE', 3):
             run_backtest(config, etf_data=etf_data, output_dir=str(tmp_path))
 
         # Read trade log CSV to verify it has entries

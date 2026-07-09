@@ -8,6 +8,8 @@ from config import (
     ETF_POOL,
     CHECK_RANGE,
     REBALANCE_THRESHOLD,
+    VOL_CHECK_RANGE,
+    VOLATILITY_LAMBDA,
     BacktestConfig,
     map_to_sina_code,
 )
@@ -30,6 +32,12 @@ class TestETFpool:
 
     def test_rebalance_threshold(self):
         assert REBALANCE_THRESHOLD == 0.01
+
+    def test_vol_check_range(self):
+        assert VOL_CHECK_RANGE == 60
+
+    def test_volatility_lambda(self):
+        assert VOLATILITY_LAMBDA == 1.0
 
     def test_benchmark_code_constant(self):
         assert BacktestConfig().benchmark_code == '000300.XSHG'

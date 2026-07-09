@@ -37,6 +37,8 @@ def calculate_momentum_signal(
     etf_data_dict: dict[str, pd.DataFrame],
     check_range: int,
     base_date: object = None,
+    vol_check_range: int | None = None,
+    vol_lambda: float | None = None,
 ) -> tuple[str | None, dict[str, float]]:
     """Determine the target ETF with the strongest positive momentum.
 
@@ -51,6 +53,13 @@ def calculate_momentum_signal(
         Reference date (``datetime.date`` or anything comparable).  Data points with
         ``date > base_date`` are excluded from consideration.  When *None*, the latest
         date across all ETFs is used.
+    vol_check_range : int or None, optional
+        Lookback window for volatility estimation (trading days).
+        When *None*, defaults to *check_range* (same window for both).
+    vol_lambda : float or None, optional
+        Volatility penalty exponent λ.  ``momentum = return / vol**λ``.
+        λ=1 → full risk adjustment, λ=0 → raw return only.
+        Defaults to 1.0 when *None*.
 
     Returns
     -------
@@ -65,7 +74,7 @@ def calculate_momentum_signal(
     -----
     Momentum is computed as volatility-normalized (Sharpe-style):
 
-        momentum = (p_latest - p_start) / p_start / annualized_vol
+        momentum = (p_latest - p_start) / p_start / annualized_vol ** λ
 
     This ensures a steady climber beats a volatile gambler with the same raw return.
 
@@ -74,6 +83,11 @@ def calculate_momentum_signal(
     """
     if not etf_data_dict:
         return None, {}
+
+    if vol_check_range is None:
+        vol_check_range = check_range
+    if vol_lambda is None:
+        vol_lambda = 1.0
 
     # ── 1. Build combined close-price DataFrame (like RQ get_price) ──────────
     #   Aligns by date index (outer join), so each ETF gets a column and dates
@@ -93,26 +107,30 @@ def calculate_momentum_signal(
 
     all_prices = pd.DataFrame(close_series)  # index=date, columns=etf_codes
 
-    # ── 2. Take the most-recent check_range rows ────────────────────────────
-    if len(all_prices) < check_range:
+    # ── 2. Check data sufficiency ─────────────────────────────────────────
+    needed = max(check_range, vol_check_range)
+    if len(all_prices) < needed:
         return None, {}
-    all_prices = all_prices.tail(check_range)
 
     # ── 3. Compute volatility-adjusted momentum (Sharpe-style) ────────────
-    #   Formula: Momentum = (p_latest - p_start) / p_start / annualized_vol
+    #   Formula: Momentum = (p_latest - p_start) / p_start / annualized_vol ** λ
     #   This normalizes raw return by risk, so a "steady climber" beats a
     #   "volatile gambler" with the same raw return.
-    start_prices = all_prices.iloc[0]
-    last_prices = all_prices.iloc[-1]
+
+    # Raw return from the check_range tail
+    raw_range = all_prices.tail(check_range)
+    start_prices = raw_range.iloc[0]
+    last_prices = raw_range.iloc[-1]
     raw_returns = (last_prices - start_prices) / start_prices
 
-    # Annualized volatility from daily returns within the window
-    daily_rets = all_prices.pct_change().iloc[1:]
+    # Volatility from the vol_check_range tail
+    vol_range = all_prices.tail(vol_check_range)
+    daily_rets = vol_range.pct_change().iloc[1:]
     ann_vol = daily_rets.std() * math.sqrt(252)
 
     # Return per unit of risk — guard against zero-vol (constant price)
     eps = 1e-10
-    risk_adjusted = raw_returns / ann_vol.replace(0, eps)
+    risk_adjusted = raw_returns / (ann_vol.replace(0, eps) ** vol_lambda)
     momentum = risk_adjusted.dropna()
 
     if momentum.empty:
@@ -135,6 +153,8 @@ def calculate_momentum_signal(
 def compute_all_momentum_signals(
     prices_df: pd.DataFrame,
     check_range: int = 22,
+    vol_check_range: int | None = None,
+    vol_lambda: float | None = None,
 ) -> pd.DataFrame:
     """Compute risk-adjusted momentum signals for all ETFs across all dates at once.
 
@@ -149,27 +169,40 @@ def compute_all_momentum_signals(
         Close-price matrix, ``index=date``, ``columns=etf_codes``, values = close
         price.  Dates with no data for a particular ETF should be ``NaN``.
     check_range : int
-        Lookback window in trading days (default 22).
+        Lookback window for raw return in trading days (default 22).
+    vol_check_range : int or None, optional
+        Lookback window for volatility estimation (trading days).
+        When *None*, defaults to *check_range* (same window for both).
+    vol_lambda : float or None, optional
+        Volatility penalty exponent λ.  ``momentum = return / vol**λ``.
+        λ=1 → full risk adjustment, λ=0 → raw return only.
+        Defaults to 1.0 when *None*.
 
     Returns
     -------
     pd.DataFrame
         Risk-adjusted momentum (Sharpe-style) for each ETF on each date.
         Same index/columns shape as *prices_df*.
-        The first ``check_range - 1`` rows are all ``NaN`` (insufficient data).
+        The first ``max(check_range, vol_check_range) - 1`` rows are all ``NaN``
+        (insufficient data).
     """
+    if vol_check_range is None:
+        vol_check_range = check_range
+    if vol_lambda is None:
+        vol_lambda = 1.0
+
     # Rolling raw return over check_range-1 periods: (p_t - p_{t-N+1}) / p_{t-N+1}
     raw_returns = prices_df.pct_change(periods=check_range - 1)
 
     # Daily returns for volatility estimation
     daily_rets = prices_df.pct_change()
 
-    # Rolling annualized volatility (std of (check_range-1) daily returns × √252)
-    rolling_vol = daily_rets.rolling(window=check_range - 1).std() * math.sqrt(252)
+    # Rolling annualized volatility (std of (vol_check_range-1) daily returns × √252)
+    rolling_vol = daily_rets.rolling(window=vol_check_range - 1).std() * math.sqrt(252)
 
     # Risk-adjusted momentum — guard against zero-vol (constant price) columns
     EPS = 1e-10
-    momentum = raw_returns / rolling_vol.replace(0, EPS)
+    momentum = raw_returns / (rolling_vol.replace(0, EPS) ** vol_lambda)
 
     return momentum
 
