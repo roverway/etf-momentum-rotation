@@ -2,8 +2,8 @@ name: 实盘信号
 
 on:
   schedule:
-    # 北京时间 15:30 = UTC 07:30（A 股 15:00 收盘）
-    - cron: '30 7 * * 1-5'
+    # 北京时间 08:30 = UTC 00:30（盘前查看信号）
+    - cron: '30 0 * * 1-5'
   workflow_dispatch:  # 支持手动触发
 
 jobs:
@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main    # 确保走 main 分支代码
 
       - name: 安装 uv
         run: |
