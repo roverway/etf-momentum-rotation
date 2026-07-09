@@ -18,7 +18,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             uv-${{ runner.os }}-
 
@@ -28,7 +28,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: 安装依赖
-        run: uv sync
+        run: uv pip install -r requirements.txt
 
       - name: 运行实盘信号
         id: signal
