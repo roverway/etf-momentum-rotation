@@ -25,7 +25,7 @@ import pandas as pd
 from config import ETF_POOL, CHECK_RANGE, REBALANCE_THRESHOLD, BacktestConfig
 from data import load_all_etf_data
 from portfolio import Portfolio
-from strategy import calculate_momentum_signal
+from strategy import calculate_momentum_signal, compute_all_momentum_signals
 from trading_calendar import get_next_trading_date, load_trading_calendar
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,10 @@ def _get_close_price(
     ------
     ValueError
         If *trade_date* is not found in the ETF's DataFrame.
+
+    .. deprecated::
+        Use ``prices_df.at[date, code]`` instead.  Kept only for backwards
+        compatibility with external callers.
     """
     df = etf_data[code]
     matches = df[df['date'] == trade_date]
@@ -172,6 +176,293 @@ def compute_summary(
 
 
 # =====================================================================================
+# Legacy & vectorized backtest loop implementations
+# =====================================================================================
+
+
+def _run_backtest_loop_legacy(
+    calendar: list[date],
+    etf_data: dict[str, pd.DataFrame],
+    etf_codes: list[str],
+    portfolio: Portfolio,
+    commission_rate: float,
+    slippage_rate: float,
+) -> tuple[list[dict], list[dict]]:
+    """Original day-by-day backtest loop — preserved for regression testing.
+
+    Returns (daily_snapshots, trade_log).
+    """
+    daily_snapshots: list[dict] = []
+    trade_log: list[dict] = []
+
+    for trade_date in calendar:
+        # 5a. 过滤当前日期之前的 ETF 数据
+        etf_data_dict: dict[str, pd.DataFrame] = {}
+        for code, df in etf_data.items():
+            sub = df[df['date'] <= trade_date]
+            if not sub.empty:
+                etf_data_dict[code] = sub
+
+        if not etf_data_dict:
+            continue
+
+        max_rows = max(len(sub) for sub in etf_data_dict.values())
+        if max_rows < CHECK_RANGE:
+            logger.warning(
+                "数据不足: 最大行数 %d < %d (CHECK_RANGE)，跳过 %s",
+                max_rows, CHECK_RANGE, trade_date,
+            )
+            continue
+
+        target: str | None
+        scores: dict[str, float]
+        target, scores = calculate_momentum_signal(
+            etf_data_dict, CHECK_RANGE, trade_date,
+        )
+
+        current_holding: str | None = (
+            next(iter(portfolio.positions)) if portfolio.positions else None
+        )
+
+        # 判断是否真正需要调仓（考虑阈值滤波）
+        should_rebalance = False
+
+        if target is not None and current_holding is not None and target != current_holding:
+            curr_mom = scores.get(current_holding)
+            tgt_mom = scores.get(target)
+            if curr_mom is not None and tgt_mom is not None:
+                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
+                    should_rebalance = True
+            else:
+                pass
+        elif target is not None and target != current_holding:
+            should_rebalance = True
+        elif target is None and current_holding:
+            should_rebalance = True
+
+        if should_rebalance:
+            if current_holding:
+                sell_price = _get_close_price(
+                    etf_data, current_holding, trade_date,
+                )
+                sell_qty = portfolio.positions[current_holding].quantity
+                portfolio.sell(
+                    current_holding, sell_qty, sell_price,
+                    commission_rate=commission_rate,
+                    slippage_rate=slippage_rate,
+                )
+                sell_effective_price = sell_price * (1 - slippage_rate)
+                trade_log.append({
+                    'date': trade_date,
+                    'action': 'SELL',
+                    'code': current_holding,
+                    'shares': sell_qty,
+                    'price': round(sell_price, 4),
+                    'value': round(sell_qty * sell_effective_price, 2),
+                })
+            if target is not None:
+                buy_price = _get_close_price(etf_data, target, trade_date)
+                effective_buy_price = buy_price * (1 + slippage_rate)
+                qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
+                if qty > 0:
+                    portfolio.buy(
+                        target, qty, buy_price,
+                        commission_rate=commission_rate,
+                        slippage_rate=slippage_rate,
+                    )
+                    trade_log.append({
+                        'date': trade_date,
+                        'action': 'BUY',
+                        'code': target,
+                        'shares': qty,
+                        'price': round(buy_price, 4),
+                        'value': round(qty * effective_buy_price, 2),
+                    })
+
+        # 更新持仓市价（仅用于估值，不影响调仓）
+        for code in list(portfolio.positions.keys()):
+            try:
+                price = _get_close_price(etf_data, code, trade_date)
+                portfolio.update_price(code, price)
+            except ValueError:
+                pass
+
+        # 每日净值快照
+        snap_holding: str | None = (
+            next(iter(portfolio.positions)) if portfolio.positions else None
+        )
+        snap_pos = portfolio.positions.get(snap_holding) if snap_holding else None
+        daily_snapshots.append({
+            'date': trade_date,
+            'portfolio_value': round(portfolio.total_value, 2),
+            'cash': round(portfolio.cash, 2),
+            'position_code': snap_holding or '',
+            'shares': snap_pos.quantity if snap_pos else 0,
+            'price': round(snap_pos.current_price, 2) if snap_pos and snap_pos.current_price is not None else 0.0,
+        })
+
+    return daily_snapshots, trade_log
+
+
+def _run_backtest_loop_vectorized(
+    calendar: list[date],
+    etf_data: dict[str, pd.DataFrame],
+    etf_codes: list[str],
+    portfolio: Portfolio,
+    commission_rate: float,
+    slippage_rate: float,
+) -> tuple[list[dict], list[dict]]:
+    """Vectorized backtest loop using pre-computed signal matrix.
+
+    Returns (daily_snapshots, trade_log).
+    """
+    # ── Pre-check overall data sufficiency ──────────────────────────────────────
+    total_data_rows = max(len(df) for df in etf_data.values()) if etf_data else 0
+    data_warning_logged = False
+    if total_data_rows < CHECK_RANGE:
+        logger.warning(
+            "数据不足: 最大行数 %d < %d (CHECK_RANGE)，将跳过信号不足的交易日",
+            total_data_rows, CHECK_RANGE,
+        )
+        data_warning_logged = True
+
+    # ── Step 1: Build unified close-price DataFrame (done once) ─────────────────
+    # Use codes actually available in etf_data, not config-level etf_codes,
+    # so that tests with mock ETF codes (e.g. 'ETF_A', 'ETF_B') work correctly.
+    data_codes = [c for c in etf_codes if c in etf_data] or list(etf_data.keys())
+    calendar_idx = pd.Index(calendar, name='date')
+    prices_df = pd.DataFrame(index=calendar_idx)
+    for code in data_codes:
+        etf_close = etf_data[code].set_index('date')['close']
+        prices_df[code] = prices_df.index.map(etf_close.get)
+
+    # ── Step 2: Pre-compute signal matrix (done once) ───────────────────────────
+    scores_df = compute_all_momentum_signals(prices_df, CHECK_RANGE)
+
+    # ── Step 3: Vectorized daily target selection ───────────────────────────────
+    # Handle all-NaN rows safely: idxmax raises on all-NaN, so compute only
+    # on rows with at least one valid value.
+    valid_signal = ~scores_df.isna().all(axis=1)
+    best_target = pd.Series(index=scores_df.index, dtype=object)
+    best_target[valid_signal] = scores_df[valid_signal].idxmax(axis=1)
+    best_momentum = scores_df.max(axis=1)
+    target_series = best_target.where(best_momentum > 0, None)
+
+    # ── Step 4: PRE-CONVERT to plain Python structures ─────────────────────────
+    # Avoid .iloc[i] and .to_dict() inside the hot loop
+    target_list: list[str | None] = target_series.tolist()
+    scores_list: list[dict[str, float]] = scores_df.to_dict('records')
+    valid_mask: list[bool] = valid_signal.tolist()
+
+    # ── Step 5: Simplified loop — only threshold + execution ────────────────────
+    daily_snapshots: list[dict] = []
+    trade_log: list[dict] = []
+    current_holding: str | None = None
+
+    for i, trade_date in enumerate(calendar):
+        target = target_list[i]
+
+        # Check data sufficiency (use pre-computed mask + list)
+        if i < CHECK_RANGE - 1 or not valid_mask[i]:
+            if not data_warning_logged and i >= CHECK_RANGE - 1 and not valid_mask[i]:
+                logger.warning(
+                    "数据不足: 信号全为 NaN (CHECK_RANGE=%d)，跳过 %s",
+                    CHECK_RANGE, trade_date,
+                )
+                data_warning_logged = True
+            daily_snapshots.append({
+                'date': trade_date,
+                'portfolio_value': round(portfolio.total_value, 2),
+                'cash': round(portfolio.cash, 2),
+                'position_code': '',
+                'shares': 0,
+                'price': 0.0,
+            })
+            continue
+
+        scores = scores_list[i]  # already a dict, no .to_dict() call
+
+        # Threshold filter (same logic, pure Python comparisons)
+        should_rebalance = False
+        if target is not None and current_holding is not None and target != current_holding:
+            curr_mom = scores.get(current_holding)
+            tgt_mom = scores.get(target)
+            if curr_mom is not None and tgt_mom is not None:
+                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
+                    should_rebalance = True
+        elif target is not None and current_holding is None:
+            should_rebalance = True
+        elif target is None and current_holding is not None:
+            should_rebalance = True
+
+        if should_rebalance:
+            # Sell old position
+            if current_holding:
+                sell_price = prices_df.at[trade_date, current_holding]
+                if not pd.isna(sell_price):
+                    sell_qty = portfolio.positions[current_holding].quantity
+                    portfolio.sell(
+                        current_holding, sell_qty, sell_price,
+                        commission_rate=commission_rate,
+                        slippage_rate=slippage_rate,
+                    )
+                    sell_effective_price = sell_price * (1 - slippage_rate)
+                    trade_log.append({
+                        'date': trade_date,
+                        'action': 'SELL',
+                        'code': current_holding,
+                        'shares': sell_qty,
+                        'price': round(sell_price, 4),
+                        'value': round(sell_qty * sell_effective_price, 2),
+                    })
+                    current_holding = None
+
+            # Buy new target
+            if target is not None:
+                buy_price = prices_df.at[trade_date, target]
+                if not pd.isna(buy_price):
+                    effective_buy_price = buy_price * (1 + slippage_rate)
+                    qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
+                    if qty > 0:
+                        portfolio.buy(
+                            target, qty, buy_price,
+                            commission_rate=commission_rate,
+                            slippage_rate=slippage_rate,
+                        )
+                        trade_log.append({
+                            'date': trade_date,
+                            'action': 'BUY',
+                            'code': target,
+                            'shares': qty,
+                            'price': round(buy_price, 4),
+                            'value': round(qty * effective_buy_price, 2),
+                        })
+                        current_holding = target
+
+        # Mark-to-market (using .at for scalar access)
+        for code in list(portfolio.positions.keys()):
+            price = prices_df.at[trade_date, code]
+            if not pd.isna(price):
+                portfolio.update_price(code, price)
+
+        # Daily snapshot
+        snap_holding: str | None = (
+            next(iter(portfolio.positions)) if portfolio.positions else None
+        )
+        snap_pos = portfolio.positions.get(snap_holding) if snap_holding else None
+        daily_snapshots.append({
+            'date': trade_date,
+            'portfolio_value': round(portfolio.total_value, 2),
+            'cash': round(portfolio.cash, 2),
+            'position_code': snap_holding or '',
+            'shares': snap_pos.quantity if snap_pos else 0,
+            'price': round(snap_pos.current_price, 2) if snap_pos and snap_pos.current_price is not None else 0.0,
+        })
+
+    return daily_snapshots, trade_log
+
+
+# =====================================================================================
 # Public API
 # =====================================================================================
 
@@ -238,124 +529,11 @@ def run_backtest(
     commission_rate = getattr(config, 'commission_rate', 0.00025)
     slippage_rate = getattr(config, 'slippage_rate', 0.0001)
 
-    # ── 5. 逐日回测 ───────────────────────────────────────────────────
-    daily_snapshots: list[dict] = []
-    trade_log: list[dict] = []
-
-    for trade_date in calendar:
-        # 5a. 过滤当前日期之前的 ETF 数据
-        etf_data_dict: dict[str, pd.DataFrame] = {}
-        for code, df in etf_data.items():
-            sub = df[df['date'] <= trade_date]
-            if not sub.empty:
-                etf_data_dict[code] = sub
-
-        if not etf_data_dict:
-            continue
-
-        # 5b. 可用历史数据 < CHECK_RANGE → 跳过
-        max_rows = max(len(sub) for sub in etf_data_dict.values())
-        if max_rows < CHECK_RANGE:
-            logger.warning(
-                "数据不足: 最大行数 %d < %d (CHECK_RANGE)，跳过 %s",
-                max_rows, CHECK_RANGE, trade_date,
-            )
-            continue
-
-        # 5c. 计算动量信号
-        target: str | None
-        scores: dict[str, float]
-        target, scores = calculate_momentum_signal(
-            etf_data_dict, CHECK_RANGE, trade_date,
-        )
-
-        # 5d. 当前持仓
-        current_holding: str | None = (
-            next(iter(portfolio.positions)) if portfolio.positions else None
-        )
-
-        # 5e. 判断是否真正需要调仓（考虑阈值滤波）
-        should_rebalance = False
-
-        if target is not None and current_holding is not None and target != current_holding:
-            # 新标的 vs 当前持仓：只有当动量超越阈值时才换仓
-            curr_mom = scores.get(current_holding)
-            tgt_mom = scores.get(target)
-            if curr_mom is not None and tgt_mom is not None:
-                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
-                    should_rebalance = True
-            else:
-                # 无法获取动量数据时，保守处理——不调仓
-                pass
-        elif target is not None and target != current_holding:
-            # 无当前持仓 or 新标的 → 直接买入
-            should_rebalance = True
-        elif target is None and current_holding:
-            # 全跌信号 → 卖出清仓
-            should_rebalance = True
-
-        if should_rebalance:
-            # 5e-i. 卖出旧持仓
-            if current_holding:
-                sell_price = _get_close_price(
-                    etf_data, current_holding, trade_date,
-                )
-                sell_qty = portfolio.positions[current_holding].quantity
-                portfolio.sell(
-                    current_holding, sell_qty, sell_price,
-                    commission_rate=commission_rate,
-                    slippage_rate=slippage_rate,
-                )
-                sell_effective_price = sell_price * (1 - slippage_rate)
-                trade_log.append({
-                    'date': trade_date,
-                    'action': 'SELL',
-                    'code': current_holding,
-                    'shares': sell_qty,
-                    'price': round(sell_price, 4),
-                    'value': round(sell_qty * sell_effective_price, 2),
-                })
-            # 5e-ii. 买入新目标（qty 需预留滑点+佣金空间）
-            if target is not None:
-                buy_price = _get_close_price(etf_data, target, trade_date)
-                effective_buy_price = buy_price * (1 + slippage_rate)
-                qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
-                if qty > 0:
-                    portfolio.buy(
-                        target, qty, buy_price,
-                        commission_rate=commission_rate,
-                        slippage_rate=slippage_rate,
-                    )
-                    trade_log.append({
-                        'date': trade_date,
-                        'action': 'BUY',
-                        'code': target,
-                        'shares': qty,
-                        'price': round(buy_price, 4),
-                        'value': round(qty * effective_buy_price, 2),
-                    })
-
-        # 5f. 更新持仓市价（仅用于估值，不影响调仓）
-        for code in list(portfolio.positions.keys()):
-            try:
-                price = _get_close_price(etf_data, code, trade_date)
-                portfolio.update_price(code, price)
-            except ValueError:
-                pass
-
-        # 5g. 每日净值快照
-        snap_holding: str | None = (
-            next(iter(portfolio.positions)) if portfolio.positions else None
-        )
-        snap_pos = portfolio.positions.get(snap_holding) if snap_holding else None
-        daily_snapshots.append({
-            'date': trade_date,
-            'portfolio_value': round(portfolio.total_value, 2),
-            'cash': round(portfolio.cash, 2),
-            'position_code': snap_holding or '',
-            'shares': snap_pos.quantity if snap_pos else 0,
-            'price': round(snap_pos.current_price, 2) if snap_pos and snap_pos.current_price is not None else 0.0,
-        })
+    # ── 5. 逐日回测（向量化加速）─────────────────────────────────────
+    daily_snapshots, trade_log = _run_backtest_loop_vectorized(
+        calendar, etf_data, etf_codes, portfolio,
+        commission_rate, slippage_rate,
+    )
 
     # ── 6. 汇总指标 & CSV 输出 ──────────────────────────────────────────
     summary = compute_summary(portfolio, daily_snapshots)

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+
+import numpy as np
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -32,6 +34,54 @@ def _make_dates(start: str = '2024-01-02', periods: int = 25) -> list[date]:
 def _make_etf_df(dates: list[date], prices: list[float]) -> pd.DataFrame:
     """Build a mock ETF DataFrame with ``date`` and ``close`` columns."""
     return pd.DataFrame({'date': dates, 'close': prices})
+
+
+def make_synthetic_etf_data(
+    etf_codes: list[str],
+    calendar: list[date],
+    base_price: float = 10.0,
+    drift: float = 0.001,
+    vol: float = 0.02,
+    seed: int = 42,
+) -> dict[str, pd.DataFrame]:
+    """Generate synthetic ETF daily data for backtest testing.
+
+    Each ETF's close price follows a geometric random walk with drift + volatility.
+    Uses a fixed seed for reproducible tests.
+
+    Parameters
+    ----------
+    etf_codes : list[str]
+        ETF codes to generate (e.g. ``['ETF_A', 'ETF_B']``).
+    calendar : list[date]
+        Trading calendar dates.
+    base_price : float
+        Starting price for all ETFs.
+    drift : float
+        Daily drift (default 0.001 ≈ 0.1% per day).
+    vol : float
+        Daily volatility (default 0.02 ≈ 2% per day).
+    seed : int
+        Random seed for reproducibility (default 42).
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        ``{code: DataFrame with 'date' and 'close' columns}``.
+    """
+    rng = np.random.default_rng(seed)
+    n = len(calendar)
+
+    result: dict[str, pd.DataFrame] = {}
+    # Each ETF gets its own random walk with shared structure
+    for code in etf_codes:
+        # Different drift per ETF so momentum signals vary
+        etf_drift = drift * (1 + (etf_codes.index(code) - len(etf_codes) / 2) * 0.2)
+        returns = rng.normal(etf_drift, vol, n)
+        prices = base_price * np.exp(np.cumsum(returns))
+        result[code] = pd.DataFrame({'date': calendar, 'close': prices})
+
+    return result
 
 
 # =====================================================================================
@@ -546,3 +596,117 @@ class TestPrintNextDaySuggestion:
         print_next_day_suggestion([], {}, MagicMock(), None)
         captured = capsys.readouterr()
         assert "无交易日历" in captured.out
+
+
+# =====================================================================================
+# Regression tests: legacy vs vectorized output equivalence
+# =====================================================================================
+
+class TestVectorizedRegression:
+    """Compare legacy and vectorized loop outputs for identical results."""
+
+    def _run_comparison(self, etf_data, calendar, config):
+        """Run both loops and return (legacy_result, vectorized_result)."""
+        from backtest_engine import _run_backtest_loop_legacy, _run_backtest_loop_vectorized
+        from portfolio import Portfolio
+
+        etf_codes = list(etf_data.keys())
+
+        # Legacy
+        p1 = Portfolio(config.initial_cash)
+        commission_rate = getattr(config, 'commission_rate', 0.00025)
+        slippage_rate = getattr(config, 'slippage_rate', 0.001)
+        legacy_snapshots, legacy_trades = _run_backtest_loop_legacy(
+            calendar, etf_data, etf_codes, p1, commission_rate, slippage_rate,
+        )
+
+        # Vectorized
+        p2 = Portfolio(config.initial_cash)
+        vec_snapshots, vec_trades = _run_backtest_loop_vectorized(
+            calendar, etf_data, etf_codes, p2, commission_rate, slippage_rate,
+        )
+
+        return (legacy_snapshots, legacy_trades, p1), (vec_snapshots, vec_trades, p2)
+
+    def test_identical_snapshots_basic(self):
+        """4 ETF × 100 days: daily_snapshots match exactly."""
+        calendar = _make_dates('2024-01-02', 100)
+        etf_data = make_synthetic_etf_data(
+            ['ETF_A', 'ETF_B', 'ETF_C', 'ETF_D'],
+            calendar, drift=0.001, vol=0.02,
+        )
+        config = BacktestConfig(start_date='2024-01-02', initial_cash=1_000_000)
+
+        (legacy_snap, legacy_trades, p1), (vec_snap, vec_trades, p2) = \
+            self._run_comparison(etf_data, calendar, config)
+
+        # Legacy loop skips pre-trade days (insufficient data); vectorized records all.
+        # Compare only the overlapping portion (tail of vec_snap matching legacy length).
+        legacy_len = len(legacy_snap)
+        assert legacy_len <= len(vec_snap), \
+            f"Legacy snapshot count {legacy_len} exceeds vectorized {len(vec_snap)}"
+        offset = len(vec_snap) - legacy_len
+        for i, (l, v) in enumerate(zip(legacy_snap, vec_snap[offset:])):
+            for key in ('portfolio_value', 'cash', 'position_code', 'shares', 'price'):
+                assert l[key] == v[key], (
+                    f"Snapshot {i} (vec idx {offset + i}) mismatch at '{key}': "
+                    f"legacy={l[key]}, vec={v[key]}"
+                )
+
+    def test_identical_trade_logs_basic(self):
+        """4 ETF × 100 days: trade_log entries match exactly."""
+        calendar = _make_dates('2024-01-02', 100)
+        etf_data = make_synthetic_etf_data(
+            ['ETF_A', 'ETF_B', 'ETF_C', 'ETF_D'],
+            calendar, drift=0.001, vol=0.02,
+        )
+        config = BacktestConfig(start_date='2024-01-02', initial_cash=1_000_000)
+
+        (legacy_snap, legacy_trades, p1), (vec_snap, vec_trades, p2) = \
+            self._run_comparison(etf_data, calendar, config)
+
+        assert len(legacy_trades) == len(vec_trades), \
+            f"Trade log length mismatch: {len(legacy_trades)} vs {len(vec_trades)}"
+        for i, (l, v) in enumerate(zip(legacy_trades, vec_trades)):
+            for key in ('date', 'action', 'code', 'shares', 'price', 'value'):
+                assert l[key] == v[key], \
+                    f"Trade {i} mismatch at '{key}': legacy={l[key]}, vec={v[key]}"
+
+    def test_identical_portfolios(self):
+        """Portfolio cash and positions match after full run."""
+        calendar = _make_dates('2024-01-02', 100)
+        etf_data = make_synthetic_etf_data(
+            ['ETF_A', 'ETF_B'],
+            calendar, drift=0.001, vol=0.02,
+        )
+        config = BacktestConfig(start_date='2024-01-02', initial_cash=1_000_000)
+
+        (_, _, p1), (_, _, p2) = self._run_comparison(etf_data, calendar, config)
+
+        assert abs(p1.cash - p2.cash) < 0.02, \
+            f"Cash mismatch: {p1.cash} vs {p2.cash}"
+        assert p1.positions.keys() == p2.positions.keys(), \
+            f"Position codes differ: {p1.positions.keys()} vs {p2.positions.keys()}"
+        if p1.positions:
+            for code in p1.positions:
+                assert p1.positions[code].quantity == p2.positions[code].quantity
+                assert abs(p1.positions[code].avg_price - p2.positions[code].avg_price) < 0.02
+
+    @patch('trading_calendar.load_trading_calendar')
+    def test_basic_backtest_matches(self, mock_cal):
+        """Full run_backtest via public API produces same results."""
+        calendar = _make_dates('2024-01-02', 100)
+        mock_cal.return_value = calendar
+
+        etf_data = make_synthetic_etf_data(
+            ['ETF_A', 'ETF_B'],
+            calendar, drift=0.001, vol=0.02,
+        )
+
+        # Run twice with same data → results should be deterministic
+        config = BacktestConfig(start_date='2024-01-02', initial_cash=1_000_000)
+        result1 = run_backtest(config, etf_data=etf_data)
+        result2 = run_backtest(config, etf_data=etf_data)
+
+        assert result1['daily_snapshots'] == result2['daily_snapshots']
+        assert result1['trade_log'] == result2['trade_log']
