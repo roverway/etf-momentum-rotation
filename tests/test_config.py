@@ -5,8 +5,9 @@ from datetime import date
 import pytest
 
 from config import (
-    CHECK_RANGE,
     ETF_POOL,
+    CHECK_RANGE,
+    REBALANCE_THRESHOLD,
     BacktestConfig,
     map_to_sina_code,
 )
@@ -26,6 +27,9 @@ class TestETFpool:
 
     def test_check_range(self):
         assert CHECK_RANGE == 22
+
+    def test_rebalance_threshold(self):
+        assert REBALANCE_THRESHOLD == 0.01
 
     def test_benchmark_code_constant(self):
         assert BacktestConfig().benchmark_code == '000300.XSHG'

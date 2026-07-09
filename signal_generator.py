@@ -117,7 +117,7 @@ def generate_signal(
             returns[code] = round(((last - first) / first) * 100, 2)
 
     # ── 3. 计算动量信号 ───────────────────────────────────────────────────
-    target = calculate_momentum_signal(filtered, check_range)
+    target, _ = calculate_momentum_signal(filtered, check_range)
 
     result = {
         'signal_date': signal_date,

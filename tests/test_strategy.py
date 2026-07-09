@@ -53,7 +53,7 @@ class TestCalculateMomentumSignal:
             '159915.XSHE': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),   # ↑  +21%, very low vol
             '518880.XSHG': _make_etf_df([10.0 - i * 0.1 for i in range(n)]),   # ↓  -21%
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, scores = calculate_momentum_signal(data, check_range=22)
         # 159915.XSHE wins because its extremely steady climb gives it the best
         # risk-adjusted return, despite having a lower raw return than 513100.XSHG.
         assert result == '159915.XSHE'
@@ -66,7 +66,7 @@ class TestCalculateMomentumSignal:
             'ETF_B': _make_etf_df([5.0 + i * 0.5 for i in range(n)]),   # +210%, highest vol
             'ETF_C': _make_etf_df([5.0 + i * 0.3 for i in range(n)]),   # +126%, medium vol
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         # ETF_A has the lowest return but also the lowest volatility,
         # giving it the best risk-adjusted return.
         assert result == 'ETF_A'
@@ -80,7 +80,7 @@ class TestCalculateMomentumSignal:
             'ETF_A': _make_etf_df([10.0 - i * 0.1 for i in range(n)]),
             'ETF_B': _make_etf_df([10.0 - i * 0.2 for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     def test_best_return_is_zero_returns_none(self):
@@ -91,7 +91,7 @@ class TestCalculateMomentumSignal:
             'ETF_A': _make_etf_df([10.0] * n),
             'ETF_B': _make_etf_df([10.0 - i * 0.1 for i in range(n)]),  # down
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     # -- single ETF (Series path in RQ) ----------------------------------------
@@ -102,7 +102,7 @@ class TestCalculateMomentumSignal:
         data = {
             '513100.XSHG': _make_etf_df([10.0 + i * 0.3 for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result == '513100.XSHG'
 
     def test_single_etf_negative_return_returns_none(self):
@@ -111,7 +111,7 @@ class TestCalculateMomentumSignal:
         data = {
             'X': _make_etf_df([10.0 - i * 0.2 for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     # -- insufficient data -----------------------------------------------------
@@ -121,7 +121,7 @@ class TestCalculateMomentumSignal:
         data = {
             'A': _make_etf_df([10.0, 11.0, 12.0, 13.0, 14.0]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     def test_insufficient_data_multiple_etfs_returns_none(self):
@@ -130,7 +130,7 @@ class TestCalculateMomentumSignal:
             'A': _make_etf_df([10.0, 11.0, 12.0]),
             'B': _make_etf_df([20.0, 21.0, 22.0, 23.0, 24.0]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     def test_some_etfs_insufficient_data_ignored(self):
@@ -141,7 +141,7 @@ class TestCalculateMomentumSignal:
             'LONG_A': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),      # ↑ high vol
             'LONG_B': _make_etf_df([10.0 + i * 0.1 for i in range(n)]),      # ↑ low vol
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         # LONG_B wins on risk-adjusted basis (steadier climb, much lower vol)
         assert result == 'LONG_B'
 
@@ -156,7 +156,7 @@ class TestCalculateMomentumSignal:
             'ETF_B': _make_etf_df(prices_b),
             'ETF_A': _make_etf_df(prices_a),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result == 'ETF_A'  # A before B alphabetically
 
     # -- base_date filtering ---------------------------------------------------
@@ -168,7 +168,7 @@ class TestCalculateMomentumSignal:
             'ETF_A': _make_etf_df([10.0 + i * 0.3 for i in range(n)]),
         }
         # base_date early enough that only ~10 rows are available (< check_range)
-        result = calculate_momentum_signal(
+        result, _ = calculate_momentum_signal(
             data, check_range=22,
             base_date=datetime.date(2024, 1, 16),
         )
@@ -182,7 +182,7 @@ class TestCalculateMomentumSignal:
         }
         # Last date in the mock data (from bdate_range(start='2024-01-02', periods=22))
         # Should include all 22 rows
-        result = calculate_momentum_signal(
+        result, _ = calculate_momentum_signal(
             data, check_range=22,
             base_date=datetime.date(2024, 1, 31),
         )
@@ -194,14 +194,14 @@ class TestCalculateMomentumSignal:
         data = {
             'A': _make_etf_df([10.0 + i * 0.5 for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result == 'A'
 
     # -- empty / edge cases ----------------------------------------------------
 
     def test_empty_dict_returns_none(self):
         """Empty etf_data_dict → None."""
-        result = calculate_momentum_signal({}, check_range=22)
+        result, _ = calculate_momentum_signal({}, check_range=22)
         assert result is None
 
     def test_etf_with_nan_close_handled(self):
@@ -212,7 +212,7 @@ class TestCalculateMomentumSignal:
             'BAD':  _make_etf_df([float('nan') if i == 0 else 10.0 + i * 0.1
                                   for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         # BAD's first price is NaN → return becomes NaN → dropna removes it
         # GOOD alone has +105% > 0
         assert result == 'GOOD'
@@ -226,7 +226,7 @@ class TestCalculateMomentumSignal:
             'A': _make_etf_df([10.0 - i * 0.01 for i in range(n)]),  # slightly down
             'B': _make_etf_df([10.0 + i * 0.01 for i in range(n)]),  # slightly up
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result == 'B'  # B is positive, so return B
 
     def test_returns_none_when_best_is_exactly_zero(self):
@@ -237,7 +237,7 @@ class TestCalculateMomentumSignal:
             'A': _make_etf_df([10.0] * n),
             'B': _make_etf_df([10.0] * n),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result is None
 
     # -- volatility adjustment specifics ---------------------------------------
@@ -258,7 +258,7 @@ class TestCalculateMomentumSignal:
             'STEADY': _make_etf_df(low_vol_prices),
             'WILD': _make_etf_df(high_vol_prices),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         assert result == 'STEADY'
 
     def test_volatility_adjustment_preference_over_raw_return(self):
@@ -276,7 +276,7 @@ class TestCalculateMomentumSignal:
             'STEADY': _make_etf_df(steady),
             'WILD': _make_etf_df(wild),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         # STEADY should win despite lower raw return, because its vol is much lower
         assert result == 'STEADY'
 
@@ -293,7 +293,7 @@ class TestCalculateMomentumSignal:
             'UP_WILD': _make_etf_df(volatile_up),
             'DOWN': _make_etf_df([100.0 - i * 0.1 for i in range(n)]),
         }
-        result = calculate_momentum_signal(data, check_range=22)
+        result, _ = calculate_momentum_signal(data, check_range=22)
         # UP_WILD is the only positive → selected
         assert result == 'UP_WILD'
 

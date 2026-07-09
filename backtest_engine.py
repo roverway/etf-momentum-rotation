@@ -22,7 +22,7 @@ from typing import Optional
 
 import pandas as pd
 
-from config import ETF_POOL, CHECK_RANGE, BacktestConfig
+from config import ETF_POOL, CHECK_RANGE, REBALANCE_THRESHOLD, BacktestConfig
 from data import load_all_etf_data
 from portfolio import Portfolio
 from strategy import calculate_momentum_signal
@@ -263,7 +263,9 @@ def run_backtest(
             continue
 
         # 5c. 计算动量信号
-        target: str | None = calculate_momentum_signal(
+        target: str | None
+        scores: dict[str, float]
+        target, scores = calculate_momentum_signal(
             etf_data_dict, CHECK_RANGE, trade_date,
         )
 
@@ -272,9 +274,28 @@ def run_backtest(
             next(iter(portfolio.positions)) if portfolio.positions else None
         )
 
-        # 5e. 调仓
-        if target is not None and target != current_holding:
-            # 卖出旧持仓
+        # 5e. 判断是否真正需要调仓（考虑阈值滤波）
+        should_rebalance = False
+
+        if target is not None and current_holding is not None and target != current_holding:
+            # 新标的 vs 当前持仓：只有当动量超越阈值时才换仓
+            curr_mom = scores.get(current_holding)
+            tgt_mom = scores.get(target)
+            if curr_mom is not None and tgt_mom is not None:
+                if tgt_mom - curr_mom > REBALANCE_THRESHOLD:
+                    should_rebalance = True
+            else:
+                # 无法获取动量数据时，保守处理——不调仓
+                pass
+        elif target is not None and target != current_holding:
+            # 无当前持仓 or 新标的 → 直接买入
+            should_rebalance = True
+        elif target is None and current_holding:
+            # 全跌信号 → 卖出清仓
+            should_rebalance = True
+
+        if should_rebalance:
+            # 5e-i. 卖出旧持仓
             if current_holding:
                 sell_price = _get_close_price(
                     etf_data, current_holding, trade_date,
@@ -294,45 +315,25 @@ def run_backtest(
                     'price': round(sell_price, 4),
                     'value': round(sell_qty * sell_effective_price, 2),
                 })
-            # 买入新目标（qty 需预留滑点+佣金空间）
-            buy_price = _get_close_price(etf_data, target, trade_date)
-            effective_buy_price = buy_price * (1 + slippage_rate)
-            qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
-            if qty > 0:
-                portfolio.buy(
-                    target, qty, buy_price,
-                    commission_rate=commission_rate,
-                    slippage_rate=slippage_rate,
-                )
-                trade_log.append({
-                    'date': trade_date,
-                    'action': 'BUY',
-                    'code': target,
-                    'shares': qty,
-                    'price': round(buy_price, 4),
-                    'value': round(qty * effective_buy_price, 2),
-                })
-
-        elif target is None and current_holding:
-            # 全跌信号 → 卖出清仓
-            sell_price = _get_close_price(
-                etf_data, current_holding, trade_date,
-            )
-            sell_qty = portfolio.positions[current_holding].quantity
-            portfolio.sell(
-                current_holding, sell_qty, sell_price,
-                commission_rate=commission_rate,
-                slippage_rate=slippage_rate,
-            )
-            sell_effective_price = sell_price * (1 - slippage_rate)
-            trade_log.append({
-                'date': trade_date,
-                'action': 'SELL',
-                'code': current_holding,
-                'shares': sell_qty,
-                'price': round(sell_price, 4),
-                'value': round(sell_qty * sell_effective_price, 2),
-            })
+            # 5e-ii. 买入新目标（qty 需预留滑点+佣金空间）
+            if target is not None:
+                buy_price = _get_close_price(etf_data, target, trade_date)
+                effective_buy_price = buy_price * (1 + slippage_rate)
+                qty = int(portfolio.cash // (effective_buy_price * (1 + commission_rate)))
+                if qty > 0:
+                    portfolio.buy(
+                        target, qty, buy_price,
+                        commission_rate=commission_rate,
+                        slippage_rate=slippage_rate,
+                    )
+                    trade_log.append({
+                        'date': trade_date,
+                        'action': 'BUY',
+                        'code': target,
+                        'shares': qty,
+                        'price': round(buy_price, 4),
+                        'value': round(qty * effective_buy_price, 2),
+                    })
 
         # 5f. 更新持仓市价（仅用于估值，不影响调仓）
         for code in list(portfolio.positions.keys()):
@@ -688,7 +689,7 @@ def print_next_day_suggestion(
         if max_rows < check_range:
             suggestion = f"数据不足（{max_rows} 行 < {check_range}），无法计算信号"
         else:
-            target = calculate_momentum_signal(filtered, check_range, base_date=next_date)
+            target, _ = calculate_momentum_signal(filtered, check_range, base_date=next_date)
             if target is not None:
                 suggestion = f"BUY {target}"
             else:

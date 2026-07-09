@@ -207,6 +207,60 @@ class TestRunBacktest:
         assert len(portfolio.positions) == 0
 
     @patch('trading_calendar.load_trading_calendar')
+    def test_threshold_suppresses_small_difference(self, mock_cal):
+        """Momentum difference below REBALANCE_THRESHOLD → no rebalance."""
+        dates = _make_dates(periods=25)
+        mock_cal.return_value = dates
+
+        # Two ETFs with very similar price trends → momentum diff < threshold
+        # ETF_A: linear +0.25/day → +6.0 over 25 days
+        # ETF_B: linear +0.24/day → +5.76 over 25 days  (very close)
+        etf_data = {
+            'ETF_A': _make_etf_df(dates, [10.0 + i * 0.25 for i in range(25)]),
+            'ETF_B': _make_etf_df(dates, [10.0 + i * 0.24 for i in range(25)]),
+        }
+        config = BacktestConfig(
+            start_date='2024-01-02', end_date='2024-02-05',
+            initial_cash=1_000_000,
+        )
+
+        with patch('backtest_engine.CHECK_RANGE', 5):
+            result = run_backtest(config, etf_data=etf_data)
+
+        portfolio = result['portfolio']
+        # Only ONE position should exist — no switching between near-identical ETFs
+        assert len(portfolio.positions) == 1
+
+    @patch('trading_calendar.load_trading_calendar')
+    def test_threshold_allows_large_difference(self, mock_cal):
+        """Momentum difference exceeds REBALANCE_THRESHOLD → rebalance happens."""
+        dates = _make_dates(periods=25)
+        mock_cal.return_value = dates
+
+        # ETF_A: strong start then flattens
+        # ETF_B: weak start then surges — large momentum difference
+        a_prices = ([10.0 + i * 0.6 for i in range(13)] +
+                    [10.0 + i * 0.0 for i in range(12)])  # total 25
+        b_prices = ([10.0 + i * 0.0 for i in range(13)] +
+                    [10.0 + i * 0.6 for i in range(12)])  # total 25
+
+        etf_data = {
+            'ETF_A': _make_etf_df(dates, a_prices),
+            'ETF_B': _make_etf_df(dates, b_prices),
+        }
+        config = BacktestConfig(
+            start_date='2024-01-02', end_date='2024-02-05',
+            initial_cash=1_000_000,
+        )
+
+        with patch('backtest_engine.CHECK_RANGE', 5):
+            result = run_backtest(config, etf_data=etf_data)
+
+        portfolio = result['portfolio']
+        # By the end ETF_B should be held (momentum diff exceeded threshold)
+        assert 'ETF_B' in portfolio.positions
+
+    @patch('trading_calendar.load_trading_calendar')
     def test_skip_insufficient_data(self, mock_cal):
         """Less data than CHECK_RANGE → no trades occur."""
         dates = _make_dates(periods=25)
@@ -463,7 +517,7 @@ class TestPrintNextDaySuggestion:
     def test_suggests_buy(self, mock_signal, mock_next):
         """Positive signal → suggests BUY <code>."""
         mock_next.return_value = date(2024, 2, 6)
-        mock_signal.return_value = 'ETF_A'
+        mock_signal.return_value = ('ETF_A', {'ETF_A': 0.1})
 
         calendar = [date(2024, 2, 5)]
         etf_data = {

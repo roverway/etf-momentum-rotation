@@ -37,7 +37,7 @@ def calculate_momentum_signal(
     etf_data_dict: dict[str, pd.DataFrame],
     check_range: int,
     base_date: object = None,
-) -> str | None:
+) -> tuple[str | None, dict[str, float]]:
     """Determine the target ETF with the strongest positive momentum.
 
     Parameters
@@ -54,23 +54,26 @@ def calculate_momentum_signal(
 
     Returns
     -------
-    str or None
-        ETF code with the highest positive return, or *None* when no candidate has
-        a return > 0 or when data is insufficient.
+    tuple[str | None, dict[str, float]]
+        ``(best_etf, scores)`` where:
+        - *best_etf* is the ETF code with the highest positive momentum, or
+          *None* when no candidate has a return > 0 or when data is insufficient.
+        - *scores* is a dict of ``{etf_code: risk_adjusted_momentum}`` for all
+          valid ETFs in the window (empty when no valid data).
 
     Notes
     -----
-    Logic mirrors the original RiceQuant implementation:
+    Momentum is computed as volatility-normalized (Sharpe-style):
 
-    .. code:: python
+        momentum = (p_latest - p_start) / p_start / annualized_vol
 
-        end_date = get_previous_trading_date(base_date)
-        start_date = get_previous_trading_date(end_date, n=check_range - 1)
-        all_prices = get_price(codes, start=start_date, end=end_date, fields='close')
-        # … then iloc[0] / iloc[-1] / dropna / max
+    This ensures a steady climber beats a volatile gambler with the same raw return.
+
+    The *scores* dict is primarily used by the backtest engine to apply a
+    rebalance threshold filter (see ``config.REBALANCE_THRESHOLD``).
     """
     if not etf_data_dict:
-        return None
+        return None, {}
 
     # ── 1. Build combined close-price DataFrame (like RQ get_price) ──────────
     #   Aligns by date index (outer join), so each ETF gets a column and dates
@@ -86,13 +89,13 @@ def calculate_momentum_signal(
         close_series[code] = sub.set_index('date')['close']
 
     if not close_series:
-        return None
+        return None, {}
 
     all_prices = pd.DataFrame(close_series)  # index=date, columns=etf_codes
 
     # ── 2. Take the most-recent check_range rows ────────────────────────────
     if len(all_prices) < check_range:
-        return None
+        return None, {}
     all_prices = all_prices.tail(check_range)
 
     # ── 3. Compute volatility-adjusted momentum (Sharpe-style) ────────────
@@ -113,7 +116,10 @@ def calculate_momentum_signal(
     momentum = risk_adjusted.dropna()
 
     if momentum.empty:
-        return None
+        return None, {}
+
+    # Build full scores dict for threshold filtering
+    scores: dict[str, float] = momentum.to_dict()
 
     # ── 4. Pick best ────────────────────────────────────────────────────────
     #   ``sort_index()`` then ``idxmax()`` provides deterministic tie-breaking
@@ -121,9 +127,9 @@ def calculate_momentum_signal(
     best_etf = momentum.sort_index().idxmax()
 
     if momentum[best_etf] > 0:
-        return best_etf
+        return best_etf, scores
 
-    return None
+    return None, scores
 
 
 # =====================================================================================
