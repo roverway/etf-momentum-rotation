@@ -2,8 +2,8 @@ name: 实盘信号
 
 on:
   schedule:
-    # 北京时间 08:30 = UTC 00:30（盘前查看信号）
-    - cron: '30 0 * * 1-5'
+    # 北京时间 08:00 = UTC 00:00（提前半小时，应对 GH Actions 队列延迟）
+    - cron: '0 0 * * 1-5'
   workflow_dispatch:
 
 jobs:
